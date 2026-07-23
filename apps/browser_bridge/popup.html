@@ -4,14 +4,17 @@
     <meta charset="utf-8">
     <title>Bridge status</title>
     <style>
-      body { font: 13px system-ui, sans-serif; min-width: 230px; }
+      body { font: 13px system-ui, sans-serif; min-width: 390px; }
       dl { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; }
       dt, dd { margin: 0; }
       dd { font-variant-numeric: tabular-nums; }
+      table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+      th, td { padding: 3px 5px; text-align: right; font-variant-numeric: tabular-nums; }
+      th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
     </style>
   </head>
   <body>
-    <strong>IC Markets EURUSD bridge</strong>
+    <strong>IC Markets four-pair display bridge</strong>
     <p id="status">checking…</p>
     <dl>
       <dt>Pending</dt><dd id="pending">0</dd>
@@ -22,6 +25,12 @@
       <dt>Rejected</dt><dd id="rejected">0</dd>
       <dt>Discovery mode</dt><dd id="discoveryMode">OFF</dd>
     </dl>
+    <table>
+      <thead>
+        <tr><th>Pair</th><th>Status</th><th>Pending</th><th>Retry</th><th>Drop</th><th>Reject</th></tr>
+      </thead>
+      <tbody id="pairs"></tbody>
+    </table>
     <script src="dist/popup.js"></script>
   </body>
 </html>

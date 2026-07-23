@@ -1,29 +1,45 @@
 # Testing
 
-Commands are the source of truth:
-
 ```bash
+make generate-contracts
+make check-generated
+make format
 make lint
 make typecheck
 make test
 make integration-test
 make smoke
 make load-test
+make secret-scan
 ```
 
-Unit tests cover Decimal math, snapshots, both partial sides, unsafe/stale state,
-reconnect invalidation, price/timestamp validation, crossed quotes, clock skew,
-duplicates, sequence and time ordering, plausibility warnings, redaction, hashes,
-and derived contract validation. Extension tests cover MV3/allowlists, origin and
-shape validation, iframe injection, visible-quote frames, binary-frame bounds,
-payload limits, token redaction, exact header-mapped DOM selection, hidden/duplicate
-layouts, reordered columns, row replacement, equal/crossed/malformed quotes,
-persistent retry, acknowledgement deletion, permanent rejection, and bounded drops.
+Python tests cover the canonical registry, deterministic generation, v0.1
+compatibility, v0.2 serialization, all pair currencies and Decimal math, the
+USDJPY `0.01` pip invariant, pair warnings, independent state/dedup, session
+invalidation, fair scheduling, per-pair capacity, and graceful drain.
+Timestamp coverage includes normal/equal time, negative skew, delayed outbox,
+collector restart ordering, page-session reset, independent four-pair sequences,
+malicious provider/collector claims, and local wall-clock adjustment.
 
-Integration uses real local Redis and TimescaleDB. Smoke orchestrates all four
-containers, runs migrations and collector, replays the fixture, verifies Redis,
-SQL rows, health/metrics, Prometheus, and Grafana, and exits nonzero on failure.
+Extension tests cover four-row discovery, reordered rows/columns, exact headers,
+extra numeric columns, hidden and responsive duplicates, identical/conflicting
+duplicates, missing/malformed isolation, USDJPY precision, row/table replacement,
+symbol remove/re-add, unchanged suppression, bounded discovery, persistent retry,
+restart recovery, round-robin/FIFO behavior, reserved capacity, rejection, and
+duplicate drain calls.
+DOM coverage includes same-price row reacquisition. Integration coverage also
+proves one active tab per pair, standby suppression, deterministic failover, and
+safe behavior when the old active tab returns.
 
-GitHub Actions repeats format, lint, Pyright, TypeScript, Python, extension,
-manifest-safety, Redis/TimescaleDB integration, and Gitleaks checks on every pull
-request. Authenticated live-terminal validation remains manual.
+Real Redis/TimescaleDB integration sends every pair, resends stable event IDs,
+proves one durable row per unique observation, checks four latest keys and global
+stream instruments, validates per-pair health isolation and redaction, and runs
+legacy and mixed replay fixtures.
+
+Smoke starts infrastructure and collector, migrates, replays mixed data, and checks
+four Redis keys, SQL, metrics, Prometheus, and the provisioned Grafana dashboard.
+Mixed load uses a deterministic 40/25/20/15 distribution and reports processed,
+dropped, latency percentiles, maximum queue depth, memory, and starvation.
+
+Live soak, restart recovery, and pair-removal isolation are recorded separately in
+the Milestone report; replay results are never presented as live evidence.

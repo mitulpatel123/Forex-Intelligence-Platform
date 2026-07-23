@@ -1,0 +1,33 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "graphTooltip": 1,
+  "panels": [
+    {"type":"stat","title":"Bridge connection","id":1,"gridPos":{"h":4,"w":4,"x":0,"y":0},"targets":[{"expr":"bridge_connected","refId":"A"}]},
+    {"type":"stat","title":"Overall adapter healthy","id":2,"gridPos":{"h":4,"w":4,"x":4,"y":0},"targets":[{"expr":"adapter_connected","refId":"A"}]},
+    {"type":"stat","title":"Observer ready","id":3,"gridPos":{"h":4,"w":4,"x":8,"y":0},"targets":[{"expr":"observer_ready","refId":"A"}]},
+    {"type":"stat","title":"Last tick age by pair","id":4,"gridPos":{"h":4,"w":12,"x":12,"y":0},"targets":[{"expr":"last_valid_tick_age_seconds","legendFormat":"{{instrument}}","refId":"A"}]},
+    {"type":"timeseries","title":"Display quote rate by pair","id":5,"gridPos":{"h":7,"w":8,"x":0,"y":4},"targets":[{"expr":"rate(display_observations_total[1m])","legendFormat":"{{instrument}}","refId":"A"}]},
+    {"type":"timeseries","title":"Latest displayed bid / ask","id":6,"gridPos":{"h":7,"w":8,"x":8,"y":4},"targets":[{"expr":"latest_display_bid","legendFormat":"{{instrument}} bid","refId":"A"},{"expr":"latest_display_ask","legendFormat":"{{instrument}} ask","refId":"B"}]},
+    {"type":"timeseries","title":"Displayed spread pips","id":7,"gridPos":{"h":7,"w":8,"x":16,"y":4},"targets":[{"expr":"latest_display_spread_pips","legendFormat":"{{instrument}}","refId":"A"}]},
+    {"type":"timeseries","title":"Outbox pending / retries","id":8,"gridPos":{"h":7,"w":8,"x":0,"y":11},"targets":[{"expr":"browser_outbox_pending","legendFormat":"{{instrument}} pending","refId":"A"},{"expr":"browser_outbox_retries_total","legendFormat":"{{instrument}} retries","refId":"B"}]},
+    {"type":"timeseries","title":"Outbox drops / rejections","id":9,"gridPos":{"h":7,"w":8,"x":8,"y":11},"targets":[{"expr":"browser_outbox_dropped_total","legendFormat":"{{instrument}} drops","refId":"A"},{"expr":"browser_outbox_rejected_total","legendFormat":"{{instrument}} rejected","refId":"B"}]},
+    {"type":"timeseries","title":"Collector queue depth","id":10,"gridPos":{"h":7,"w":8,"x":16,"y":11},"targets":[{"expr":"collector_queue_depth","legendFormat":"{{instrument}}","refId":"A"}]},
+    {"type":"timeseries","title":"Quality counters","id":11,"gridPos":{"h":7,"w":8,"x":0,"y":18},"targets":[{"expr":"invalid_events_total","legendFormat":"{{instrument}} invalid","refId":"A"},{"expr":"duplicate_events_total","legendFormat":"{{instrument}} duplicate","refId":"B"},{"expr":"stale_events_total","legendFormat":"{{instrument}} stale","refId":"C"}]},
+    {"type":"timeseries","title":"Redis / Timescale latency p95","id":12,"gridPos":{"h":7,"w":8,"x":8,"y":18},"targets":[{"expr":"histogram_quantile(0.95, sum by (le,instrument) (rate(redis_publish_latency_seconds_bucket[5m])))","legendFormat":"{{instrument}} redis","refId":"A"},{"expr":"histogram_quantile(0.95, sum by (le,instrument) (rate(timescale_write_latency_seconds_bucket[5m])))","legendFormat":"{{instrument}} timescale","refId":"B"}]},
+    {"type":"timeseries","title":"Process CPU / memory","id":13,"gridPos":{"h":7,"w":8,"x":16,"y":18},"targets":[{"expr":"collector_process_cpu_percent","refId":"A"},{"expr":"collector_process_memory_bytes","refId":"B"}]},
+    {"type":"table","title":"Recent quality event counters","id":14,"gridPos":{"h":7,"w":24,"x":0,"y":25},"targets":[{"expr":"events_by_quality_total","format":"table","instant":true,"refId":"A"}]},
+    {"type":"timeseries","title":"Browser → collector delay p50 (ms)","id":15,"gridPos":{"h":7,"w":8,"x":0,"y":32},"targets":[{"expr":"histogram_quantile(0.50, sum by (le,instrument) (rate(browser_to_collector_delay_milliseconds_bucket[5m])))","legendFormat":"{{instrument}}","refId":"A"}]},
+    {"type":"timeseries","title":"Browser → collector delay p95 (ms)","id":16,"gridPos":{"h":7,"w":8,"x":8,"y":32},"targets":[{"expr":"histogram_quantile(0.95, sum by (le,instrument) (rate(browser_to_collector_delay_milliseconds_bucket[5m])))","legendFormat":"{{instrument}}","refId":"A"}]},
+    {"type":"timeseries","title":"Browser → collector delay p99 (ms)","id":17,"gridPos":{"h":7,"w":8,"x":16,"y":32},"targets":[{"expr":"histogram_quantile(0.99, sum by (le,instrument) (rate(browser_to_collector_delay_milliseconds_bucket[5m])))","legendFormat":"{{instrument}}","refId":"A"}]},
+    {"type":"timeseries","title":"Multiple browser sources / standby suppression","id":18,"gridPos":{"h":7,"w":24,"x":0,"y":39},"targets":[{"expr":"multiple_browser_sources","legendFormat":"{{instrument}} multiple sources","refId":"A"},{"expr":"rate(standby_source_observations_total[5m])","legendFormat":"{{instrument}} standby suppressed/s","refId":"B"}]}
+  ],
+  "schemaVersion": 40,
+  "tags": ["forex", "ic-markets", "display-quotes", "four-pair"],
+  "templating": {"list":[]},
+  "time": {"from":"now-30m","to":"now"},
+  "timezone":"browser",
+  "title":"IC Markets Four-Pair Display-Quote Pipeline Health",
+  "uid":"icm-four-pair-health",
+  "version":1
+}

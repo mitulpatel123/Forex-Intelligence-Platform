@@ -1,8 +1,188 @@
 {
-  "$schema":"https://json-schema.org/draft/2020-12/schema",
-  "$id":"urn:forex-intelligence:RAW_PROVIDER_EVENT:0.1",
-  "type":"object","additionalProperties":false,
-  "required":["event_id","schema_version","event_type","provider","adapter_instance_id","connection_id","session_id","received_at","payload_content_type","payload","content_hash","channel_metadata","redaction_status","redactions","trace_id"],
-  "properties":{"schema_version":{"const":"0.1"},"event_type":{"const":"RAW_PROVIDER_EVENT"},"provider":{"const":"IC_MARKETS"},"event_id":{"type":"string"},"adapter_instance_id":{"type":"string"},"connection_id":{"type":"string"},"session_id":{"type":"string"},"instrument":{"type":["string","null"]},"provider_event_time":{"type":["string","null"],"format":"date-time"},"received_at":{"type":"string","format":"date-time"},"payload_content_type":{"type":"string"},"payload":{},"content_hash":{"type":"string","pattern":"^sha256:"},"channel_metadata":{"type":"object"},"redaction_status":{"enum":["SANITIZED","NOT_REQUIRED"]},"redactions":{"type":"array","items":{"type":"string"}},"trace_id":{"type":"string"}}
+  "additionalProperties": false,
+  "properties": {
+    "adapter_instance_id": {
+      "title": "Adapter Instance Id",
+      "type": "string"
+    },
+    "browser_observed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Browser Observed At"
+    },
+    "browser_to_collector_delay_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Browser To Collector Delay Ms"
+    },
+    "channel_metadata": {
+      "additionalProperties": true,
+      "title": "Channel Metadata",
+      "type": "object"
+    },
+    "collector_received_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Collector Received At"
+    },
+    "connection_id": {
+      "title": "Connection Id",
+      "type": "string"
+    },
+    "content_hash": {
+      "title": "Content Hash",
+      "type": "string"
+    },
+    "document_session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Document Session Id"
+    },
+    "event_id": {
+      "title": "Event Id",
+      "type": "string"
+    },
+    "event_type": {
+      "const": "RAW_PROVIDER_EVENT",
+      "default": "RAW_PROVIDER_EVENT",
+      "title": "Event Type",
+      "type": "string"
+    },
+    "instrument": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Instrument"
+    },
+    "observation_sequence": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Observation Sequence"
+    },
+    "payload": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      ],
+      "title": "Payload"
+    },
+    "payload_content_type": {
+      "title": "Payload Content Type",
+      "type": "string"
+    },
+    "provider": {
+      "const": "IC_MARKETS",
+      "default": "IC_MARKETS",
+      "title": "Provider",
+      "type": "string"
+    },
+    "provider_event_time": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Provider Event Time"
+    },
+    "received_at": {
+      "format": "date-time",
+      "title": "Received At",
+      "type": "string"
+    },
+    "redaction_status": {
+      "enum": [
+        "SANITIZED",
+        "NOT_REQUIRED"
+      ],
+      "title": "Redaction Status",
+      "type": "string"
+    },
+    "redactions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Redactions",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "session_id": {
+      "title": "Session Id",
+      "type": "string"
+    },
+    "trace_id": {
+      "title": "Trace Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "adapter_instance_id",
+    "connection_id",
+    "session_id",
+    "received_at",
+    "payload_content_type",
+    "payload",
+    "content_hash",
+    "redaction_status"
+  ],
+  "title": "RawProviderEvent",
+  "type": "object"
 }
-

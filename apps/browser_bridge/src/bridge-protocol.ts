@@ -1,16 +1,24 @@
 import type { CapturedFrame } from "./schema";
+import {
+  type SupportedInstrument,
+  isSupportedInstrument,
+} from "./instruments.generated";
 
 export const DISCOVERY_INGEST_URL = "http://127.0.0.1:8001/ingest/discovery";
 export const PROVIDER_INGEST_URL = "http://127.0.0.1:8001/ingest/provider";
 export const HEARTBEAT_URL = "http://127.0.0.1:8001/ingest/bridge-heartbeat";
 
 export type BrowserIdentity = {
+  browserRunId: string;
+  tabId: number;
+  frameId: number;
+  documentSessionId: string;
   connectionId: string;
   sessionId: string;
 };
 
 export type VisibleQuote = {
-  instrument: "EURUSD";
+  instrument: SupportedInstrument;
   bid: string;
   ask: string;
 };
@@ -22,6 +30,10 @@ export function browserIdentity(
   documentSessionId: string,
 ): BrowserIdentity {
   return {
+    browserRunId,
+    tabId,
+    frameId,
+    documentSessionId,
     connectionId: `browser-${browserRunId}-tab-${tabId}-frame-${frameId}`,
     sessionId: `document-${documentSessionId}`,
   };
@@ -38,13 +50,13 @@ export function parseVisibleQuote(frame: CapturedFrame): VisibleQuote | null {
   if (typeof value !== "object" || value === null) return null;
   const quote = value as Record<string, unknown>;
   if (
-    quote.instrument !== "EURUSD" ||
+    !isSupportedInstrument(quote.instrument) ||
     typeof quote.bid !== "string" ||
     typeof quote.ask !== "string"
   ) {
     return null;
   }
-  return { instrument: "EURUSD", bid: quote.bid, ask: quote.ask };
+  return { instrument: quote.instrument, bid: quote.bid, ask: quote.ask };
 }
 
 export function providerRequest(
@@ -52,15 +64,23 @@ export function providerRequest(
   identity: BrowserIdentity,
   frame: CapturedFrame,
   quote: VisibleQuote,
+  observationSequence: number,
 ): Record<string, unknown> {
   return {
     event_id: eventId,
+    instrument: quote.instrument,
+    browser_run_id: identity.browserRunId,
+    tab_id: identity.tabId,
+    frame_id: identity.frameId,
+    document_session_id: identity.documentSessionId,
     connection_id: identity.connectionId,
     session_id: identity.sessionId,
+    browser_observed_at: frame.receivedAt,
     received_at: frame.receivedAt,
+    observation_sequence: observationSequence,
     semantics: "snapshot",
     payload: {
-      instrument: "EURUSD",
+      instrument: quote.instrument,
       bid: quote.bid,
       ask: quote.ask,
       provider_event_time: null,

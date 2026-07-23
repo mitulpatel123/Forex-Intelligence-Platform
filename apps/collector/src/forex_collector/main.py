@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+from collections import deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import psutil
 import structlog
@@ -16,15 +17,23 @@ import uvicorn
 from adapter_sdk import ProviderEnvelope
 from event_bus import RedisEventBus
 from fastapi import FastAPI, Header, HTTPException, Request, Response, status
-from forex_contracts import AdapterState, AdapterStatus, RawProviderEvent
+from forex_contracts import (
+    SUPPORTED_INSTRUMENTS,
+    AdapterState,
+    AdapterStatus,
+    QualityStatus,
+    RawProviderEvent,
+    SupportedInstrument,
+)
 from forex_contracts.models import canonical_hash
 from ic_markets_adapter import IcMarketsAdapter
 from ic_markets_adapter.redaction import redact
 from observability import METRICS
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from storage import PostgresStorage
 
+from forex_collector.fair_queue import FairInstrumentQueue
 from forex_collector.pipeline import Pipeline
 from forex_collector.settings import Settings
 
@@ -36,12 +45,36 @@ class BridgeMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     event_id: str = Field(min_length=8, max_length=128)
+    instrument: SupportedInstrument
+    browser_run_id: str = Field(min_length=8, max_length=128)
+    tab_id: int
+    frame_id: int
+    document_session_id: str = Field(min_length=8, max_length=128)
     connection_id: str
     session_id: str
+    browser_observed_at: datetime
     received_at: datetime
-    semantics: str
+    observation_sequence: int | None = None
+    semantics: Literal["snapshot"]
     payload: dict[str, Any]
-    channel_metadata: dict[str, Any] = {}
+    channel_metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("browser_observed_at", "received_at")
+    @classmethod
+    def normalize_browser_timestamps(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("browser timestamps must be timezone-aware")
+        return value.astimezone(UTC)
+
+    @model_validator(mode="after")
+    def instrument_matches_payload(self) -> BridgeMessage:
+        if self.payload.get("instrument") != self.instrument:
+            raise ValueError("top-level and payload instruments must match")
+        if self.received_at != self.browser_observed_at:
+            raise ValueError(
+                "received_at is the DISPLAY_QUOTE compatibility alias for browser_observed_at"
+            )
+        return self
 
 
 class DiscoveryMessage(BaseModel):
@@ -53,11 +86,28 @@ class DiscoveryMessage(BaseModel):
     frame: dict[str, Any]
 
 
+class PairHeartbeat(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_status: Literal["FOUND", "READY", "MISSING", "AMBIGUOUS", "STALE"]
+    last_observation_time: datetime | None = None
+    outbox_pending: int = Field(ge=0)
+    outbox_produced: int = Field(ge=0)
+    outbox_acknowledged: int = Field(ge=0)
+    outbox_retries: int = Field(ge=0)
+    outbox_dropped: int = Field(ge=0)
+    outbox_rejected: int = Field(ge=0)
+
+
 class BridgeHeartbeat(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     connection_id: str = Field(min_length=8, max_length=200)
     session_id: str = Field(min_length=8, max_length=200)
+    browser_run_id: str = Field(min_length=8, max_length=128)
+    tab_id: int
+    frame_id: int
+    document_session_id: str = Field(min_length=8, max_length=128)
     observer_ready: bool
     bridge_state: str = Field(max_length=64)
     outbox_pending: int = Field(ge=0)
@@ -66,6 +116,13 @@ class BridgeHeartbeat(BaseModel):
     outbox_retries: int = Field(ge=0)
     outbox_dropped: int = Field(ge=0)
     outbox_rejected: int = Field(ge=0)
+    pairs: dict[SupportedInstrument, PairHeartbeat]
+
+    @model_validator(mode="after")
+    def has_exact_supported_pairs(self) -> BridgeHeartbeat:
+        if set(self.pairs) != set(SUPPORTED_INSTRUMENTS):
+            raise ValueError("heartbeat must contain exactly the four supported instruments")
+        return self
 
 
 def ensure_token(path_string: str) -> str:
@@ -82,120 +139,311 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     state: dict[str, Any] = {
         "ready": False,
         "live": True,
-        "last_event": None,
-        "last_tick": None,
         "components": {},
         "bridge_sessions": {},
         "bridge_reconnect_count": 0,
         "bridge_seen": False,
+        "active_sources": {instrument: None for instrument in SUPPORTED_INSTRUMENTS},
+        "last_tick": {instrument: None for instrument in SUPPORTED_INSTRUMENTS},
+        "recent_observations": {
+            instrument: deque(maxlen=10_000) for instrument in SUPPORTED_INSTRUMENTS
+        },
+        "pair_counters": {
+            instrument: {
+                "invalid_events": 0,
+                "duplicate_events": 0,
+                "out_of_order_events": 0,
+                "stale_events": 0,
+            }
+            for instrument in SUPPORTED_INSTRUMENTS
+        },
     }
+
+    def expire_bridge_sessions(now: datetime) -> None:
+        sessions = state["bridge_sessions"]
+        for session_id, session in list(sessions.items()):
+            if (
+                now - session["last_message"]
+            ).total_seconds() > config.bridge_session_expiry_seconds:
+                pipeline = state.get("pipeline")
+                if pipeline is not None:
+                    pipeline.adapter.on_disconnect(session["connection_id"], session_id)
+                del sessions[session_id]
+                for instrument in SUPPORTED_INSTRUMENTS:
+                    if state["active_sources"][instrument] == session_id:
+                        state["active_sources"][instrument] = None
+
+    def eligible_source_sessions(instrument: str, now: datetime) -> list[str]:
+        return [
+            session_id
+            for session_id, session in state["bridge_sessions"].items()
+            if (now - session["last_message"]).total_seconds() <= config.bridge_stale_after_seconds
+            and session["observer_ready"]
+            and session["pairs"][instrument]["target_status"] in {"FOUND", "READY", "STALE"}
+        ]
+
+    def refresh_active_sources(now: datetime) -> None:
+        expire_bridge_sessions(now)
+        for instrument in SUPPORTED_INSTRUMENTS:
+            eligible = eligible_source_sessions(instrument, now)
+            current = state["active_sources"][instrument]
+            if current not in eligible:
+                state["active_sources"][instrument] = min(eligible, default=None)
+
+    def source_public_view(session: dict[str, Any] | None) -> dict[str, Any] | None:
+        if session is None:
+            return None
+        return {
+            "browser_run_id": session.get("browser_run_id"),
+            "tab_id": session.get("tab_id"),
+            "frame_id": session.get("frame_id"),
+            "document_session_id": session.get("document_session_id"),
+        }
 
     def bridge_health() -> dict[str, Any]:
         now = datetime.now(UTC)
+        refresh_active_sources(now)
         sessions = state["bridge_sessions"]
-        for session_id, session in list(sessions.items()):
-            if (now - session["last_message"]).total_seconds() > 3_600:
-                del sessions[session_id]
-        fresh_sessions = [
+        fresh = [
             session
             for session in sessions.values()
             if (now - session["last_message"]).total_seconds() <= config.bridge_stale_after_seconds
         ]
-        ready_sessions = [session for session in fresh_sessions if session["observer_ready"]]
-        last_browser_message = max(
+        ready = [session for session in fresh if session["observer_ready"]]
+        last_message = max(
             (session["last_message"] for session in sessions.values()),
             default=None,
         )
-        outbox_fields = [
+        total_fields = (
             "outbox_pending",
             "outbox_produced",
             "outbox_acknowledged",
             "outbox_retries",
             "outbox_dropped",
             "outbox_rejected",
-        ]
-        counters = {
-            field: max((session[field] for session in fresh_sessions), default=0)
-            for field in outbox_fields
+        )
+        totals = {
+            field: max((session[field] for session in fresh), default=0) for field in total_fields
         }
+        priority = {"MISSING": 0, "FOUND": 1, "READY": 2, "STALE": 2, "AMBIGUOUS": 3}
+        pairs: dict[str, dict[str, Any]] = {}
+        for instrument in SUPPORTED_INSTRUMENTS:
+            eligible = eligible_source_sessions(instrument, now)
+            candidates = [session["pairs"][instrument] for session in fresh]
+            selected = max(
+                candidates, key=lambda pair: priority.get(pair["target_status"], 0), default=None
+            )
+            pairs[instrument] = {
+                "target_status": selected["target_status"] if selected else "MISSING",
+                "last_observation_time": max(
+                    (
+                        pair["last_observation_time"]
+                        for pair in candidates
+                        if pair["last_observation_time"] is not None
+                    ),
+                    default=None,
+                ),
+                **{
+                    field: max((pair[field] for pair in candidates), default=0)
+                    for field in total_fields
+                },
+                "active_source": source_public_view(
+                    sessions.get(state["active_sources"][instrument])
+                ),
+                "eligible_sources": len(eligible),
+                "multiple_sources": len(eligible) > 1,
+                "source_status": (
+                    "MULTIPLE_SOURCES"
+                    if len(eligible) > 1
+                    else "ACTIVE"
+                    if state["active_sources"][instrument]
+                    else "NO_SOURCE"
+                ),
+            }
         return {
-            "connected": bool(ready_sessions),
-            "observer_ready": bool(ready_sessions),
-            "last_browser_message": last_browser_message,
+            "connected": bool(ready),
+            "observer_ready": bool(ready),
+            "observer_documents": len(fresh),
+            "last_browser_message": last_message,
             "last_browser_message_age_seconds": (
-                (now - last_browser_message).total_seconds()
-                if last_browser_message is not None
-                else None
+                (now - last_message).total_seconds() if last_message else None
             ),
-            **counters,
+            **totals,
+            "pairs": pairs,
         }
 
-    def current_adapter_state() -> tuple[AdapterState, str, bool, float | None]:
+    def pair_health(bridge: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        now = datetime.now(UTC)
+        result: dict[str, dict[str, Any]] = {}
+        for instrument in SUPPORTED_INSTRUMENTS:
+            browser = bridge["pairs"][instrument]
+            last_tick = state["last_tick"][instrument]
+            age = (now - last_tick).total_seconds() if last_tick else None
+            target = browser["target_status"]
+            if target == "AMBIGUOUS":
+                pair_status = "AMBIGUOUS"
+            elif target == "MISSING":
+                pair_status = "MISSING"
+            elif last_tick is None:
+                pair_status = "INITIALIZING"
+            elif target == "STALE" or (age is not None and age > config.stale_after_seconds):
+                pair_status = "STALE"
+            else:
+                pair_status = "HEALTHY"
+            cutoff = now - timedelta(seconds=60)
+            observations: deque[datetime] = state["recent_observations"][instrument]
+            while observations and observations[0] < cutoff:
+                observations.popleft()
+            result[instrument] = {
+                "target_found": target in {"FOUND", "READY", "STALE"},
+                "observer_ready": target in {"FOUND", "READY", "STALE"},
+                "last_observation_time": browser["last_observation_time"],
+                "last_valid_tick_time": last_tick,
+                "last_valid_tick_age_seconds": age,
+                "event_rate": len(observations) / 60,
+                "outbox_pending": browser["outbox_pending"],
+                "outbox_produced": browser["outbox_produced"],
+                "outbox_acknowledged": browser["outbox_acknowledged"],
+                "outbox_retries": browser["outbox_retries"],
+                "outbox_dropped": browser["outbox_dropped"],
+                "outbox_rejected": browser["outbox_rejected"],
+                "active_source": browser["active_source"],
+                "eligible_sources": browser["eligible_sources"],
+                "multiple_sources": browser["multiple_sources"],
+                "source_status": browser["source_status"],
+                **state["pair_counters"][instrument],
+                "status": pair_status,
+            }
+        return result
+
+    def current_adapter_state() -> tuple[AdapterState, str, bool, dict[str, Any], dict[str, Any]]:
         bridge = bridge_health()
-        last_tick = state["last_tick"]
-        tick_age = (
-            (datetime.now(UTC) - last_tick).total_seconds() if last_tick is not None else None
-        )
+        pairs = pair_health(bridge)
         if not bridge["connected"]:
             return (
                 AdapterState.DISCONNECTED,
                 "Browser bridge heartbeat is not fresh",
                 False,
-                tick_age,
+                bridge,
+                pairs,
             )
-        if last_tick is None:
+        statuses = [pair["status"] for pair in pairs.values()]
+        if all(pair_status in {"MISSING", "INITIALIZING"} for pair_status in statuses):
             return (
                 AdapterState.INITIALIZING,
-                "Browser observer is ready and waiting for the first valid quote",
+                "Browser connected; waiting for supported Market Watch rows",
                 True,
-                tick_age,
+                bridge,
+                pairs,
             )
-        if tick_age is not None and tick_age > config.stale_after_seconds:
+        if all(pair_status == "HEALTHY" for pair_status in statuses) and not any(
+            pair["multiple_sources"] for pair in pairs.values()
+        ):
             return (
-                AdapterState.DEGRADED,
-                "Browser bridge is connected but the feed is stale",
+                AdapterState.CONNECTED,
+                "All four display quotes are healthy",
                 True,
-                tick_age,
+                bridge,
+                pairs,
             )
-        return AdapterState.CONNECTED, "Validated display quotes are flowing", True, tick_age
+        return (
+            AdapterState.DEGRADED,
+            "One or more display quotes are missing, ambiguous, stale, or unhealthy",
+            True,
+            bridge,
+            pairs,
+        )
 
     def touch_bridge_session(
         connection_id: str,
         session_id: str,
         *,
-        observer_ready: bool = True,
-        counters: dict[str, int] | None = None,
+        observer_ready: bool | None = None,
+        heartbeat: BridgeHeartbeat | None = None,
+        identity: dict[str, Any] | None = None,
+        observed_instrument: str | None = None,
     ) -> None:
         was_connected = bridge_health()["connected"]
         existing = state["bridge_sessions"].get(session_id, {})
+        empty_pairs = {
+            instrument: {
+                "target_status": "MISSING",
+                "last_observation_time": None,
+                "outbox_pending": 0,
+                "outbox_produced": 0,
+                "outbox_acknowledged": 0,
+                "outbox_retries": 0,
+                "outbox_dropped": 0,
+                "outbox_rejected": 0,
+            }
+            for instrument in SUPPORTED_INSTRUMENTS
+        }
         state["bridge_sessions"][session_id] = {
             "connection_id": connection_id,
             "last_message": datetime.now(UTC),
-            "observer_ready": observer_ready,
-            "outbox_pending": (counters or {}).get(
-                "outbox_pending", existing.get("outbox_pending", 0)
+            "observer_ready": (
+                heartbeat.observer_ready
+                if heartbeat
+                else observer_ready
+                if observer_ready is not None
+                else existing.get("observer_ready", False)
             ),
-            "outbox_produced": (counters or {}).get(
-                "outbox_produced", existing.get("outbox_produced", 0)
+            "browser_run_id": (
+                heartbeat.browser_run_id
+                if heartbeat
+                else (identity or {}).get("browser_run_id", existing.get("browser_run_id"))
             ),
-            "outbox_acknowledged": (counters or {}).get(
-                "outbox_acknowledged", existing.get("outbox_acknowledged", 0)
+            "tab_id": (
+                heartbeat.tab_id
+                if heartbeat
+                else (identity or {}).get("tab_id", existing.get("tab_id"))
             ),
-            "outbox_retries": (counters or {}).get(
-                "outbox_retries", existing.get("outbox_retries", 0)
+            "frame_id": (
+                heartbeat.frame_id
+                if heartbeat
+                else (identity or {}).get("frame_id", existing.get("frame_id"))
             ),
-            "outbox_dropped": (counters or {}).get(
-                "outbox_dropped", existing.get("outbox_dropped", 0)
+            "document_session_id": (
+                heartbeat.document_session_id
+                if heartbeat
+                else (identity or {}).get(
+                    "document_session_id", existing.get("document_session_id")
+                )
             ),
-            "outbox_rejected": (counters or {}).get(
-                "outbox_rejected", existing.get("outbox_rejected", 0)
+            **{
+                field: (getattr(heartbeat, field) if heartbeat else existing.get(field, 0))
+                for field in (
+                    "outbox_pending",
+                    "outbox_produced",
+                    "outbox_acknowledged",
+                    "outbox_retries",
+                    "outbox_dropped",
+                    "outbox_rejected",
+                )
+            },
+            "pairs": (
+                {
+                    instrument: heartbeat.pairs[instrument].model_dump()
+                    for instrument in SUPPORTED_INSTRUMENTS
+                }
+                if heartbeat
+                else existing.get("pairs", empty_pairs)
             ),
         }
+        if observed_instrument is not None:
+            observed = state["bridge_sessions"][session_id]
+            observed["observer_ready"] = True
+            observed["pairs"][observed_instrument]["target_status"] = "READY"
+            observed["pairs"][observed_instrument]["last_observation_time"] = datetime.now(UTC)
         if len(state["bridge_sessions"]) > 100:
             oldest = min(
                 state["bridge_sessions"],
                 key=lambda key: state["bridge_sessions"][key]["last_message"],
             )
+            evicted = state["bridge_sessions"][oldest]
+            pipeline = state.get("pipeline")
+            if pipeline is not None:
+                pipeline.adapter.on_disconnect(evicted["connection_id"], oldest)
             del state["bridge_sessions"][oldest]
         is_connected = bridge_health()["connected"]
         if is_connected and not was_connected and state["bridge_seen"]:
@@ -203,6 +451,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             METRICS.adapter_reconnect_total.inc()
         if is_connected:
             state["bridge_seen"] = True
+
+    def require_bridge_access(request: Request, token: str | None) -> None:
+        client_host = request.client.host if request.client else None
+        if client_host not in {"127.0.0.1", "::1", "testclient"}:
+            raise HTTPException(status_code=403, detail="loopback clients only")
+        if not secrets.compare_digest(token or "", state["token"]):
+            raise HTTPException(status_code=401, detail="invalid bridge token")
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -218,51 +473,105 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await storage.migrate(migrations)
             state["bus"] = bus
             state["storage"] = storage
-            state["pipeline"] = Pipeline(IcMarketsAdapter(), bus, storage)
-            queue: asyncio.Queue[tuple[ProviderEnvelope, asyncio.Future[tuple[int, int]]]] = (
-                asyncio.Queue(maxsize=config.queue_size)
+            state["pipeline"] = Pipeline(
+                IcMarketsAdapter(
+                    dedup_cache_max_entries=config.dedup_cache_max_entries,
+                    dedup_cache_ttl=timedelta(seconds=config.dedup_cache_ttl_seconds),
+                    max_browser_to_collector_delay=timedelta(
+                        milliseconds=config.max_browser_to_collector_delay_ms
+                    ),
+                    reject_negative_browser_to_collector_delay=(
+                        config.reject_negative_browser_to_collector_delay
+                    ),
+                    reject_excessive_browser_to_collector_delay=(
+                        config.reject_excessive_browser_to_collector_delay
+                    ),
+                    reject_local_wall_clock_adjustment=(config.reject_local_wall_clock_adjustment),
+                    missing_observation_sequence_severity=(
+                        config.missing_observation_sequence_severity
+                    ),
+                    non_increasing_observation_sequence_severity=(
+                        config.non_increasing_observation_sequence_severity
+                    ),
+                ),
+                bus,
+                storage,
             )
+            queue: FairInstrumentQueue[
+                tuple[ProviderEnvelope, asyncio.Future[tuple[int, list[QualityStatus]]]]
+            ] = FairInstrumentQueue(config.queue_size)
             state["queue"] = queue
 
             async def queue_worker() -> None:
                 while True:
-                    envelope, future = await queue.get()
+                    instrument, (envelope, future) = await queue.get()
                     try:
                         output = await state["pipeline"].process(envelope)
-                        result = (1 if output.tick else 0, len(output.quality_events))
+                        result = (
+                            1 if output.tick else 0,
+                            [quality.classification for quality in output.quality_events],
+                        )
                         if not future.done():
                             future.set_result(result)
                     except Exception as exc:
                         if not future.done():
                             future.set_exception(exc)
                     finally:
-                        queue.task_done()
-                        METRICS.collector_queue_depth.set(queue.qsize())
+                        queue.task_done(instrument)
+                        METRICS.collector_queue_depth.labels(instrument).set(
+                            queue.depth(instrument)
+                        )
 
             async def heartbeat_worker() -> None:
                 process = psutil.Process()
                 while True:
-                    adapter_state, summary, connected, _ = current_adapter_state()
-                    bridge = bridge_health()
+                    adapter_state, summary, connected, bridge, pairs = current_adapter_state()
                     state["components"]["adapter"] = adapter_state.value
+                    last_ticks = [tick for tick in state["last_tick"].values() if tick is not None]
                     heartbeat = AdapterStatus(
                         instance_id="icm-local-01",
                         state=adapter_state,
                         connection_count=1 if connected else 0,
                         reconnect_count=state["bridge_reconnect_count"],
                         last_message_time=bridge["last_browser_message"],
-                        last_valid_tick_time=state["last_tick"],
+                        last_valid_tick_time=max(last_ticks, default=None),
                         summary=summary,
                     )
                     await storage.store_heartbeat(heartbeat)
                     await bus.publish("adapter.status", heartbeat)
-                    METRICS.adapter_connected.set(1 if connected else 0)
+                    METRICS.adapter_connected.set(
+                        1 if adapter_state == AdapterState.CONNECTED else 0
+                    )
                     METRICS.bridge_connected.set(1 if bridge["connected"] else 0)
                     METRICS.observer_ready.set(1 if bridge["observer_ready"] else 0)
-                    METRICS.browser_outbox_pending.set(bridge["outbox_pending"])
-                    METRICS.browser_outbox_dropped_total.set(bridge["outbox_dropped"])
-                    METRICS.browser_outbox_retries_total.set(bridge["outbox_retries"])
-                    METRICS.browser_outbox_acknowledged_total.set(bridge["outbox_acknowledged"])
+                    for instrument in SUPPORTED_INSTRUMENTS:
+                        pair = pairs[instrument]
+                        METRICS.browser_outbox_pending.labels(instrument).set(
+                            pair["outbox_pending"]
+                        )
+                        METRICS.browser_outbox_produced_total.labels(instrument).set(
+                            pair["outbox_produced"]
+                        )
+                        METRICS.browser_outbox_acknowledged_total.labels(instrument).set(
+                            pair["outbox_acknowledged"]
+                        )
+                        METRICS.browser_outbox_retries_total.labels(instrument).set(
+                            pair["outbox_retries"]
+                        )
+                        METRICS.browser_outbox_dropped_total.labels(instrument).set(
+                            pair["outbox_dropped"]
+                        )
+                        METRICS.browser_outbox_rejected_total.labels(instrument).set(
+                            pair["outbox_rejected"]
+                        )
+                        METRICS.multiple_browser_sources.labels(instrument).set(
+                            1 if pair["multiple_sources"] else 0
+                        )
+                        if pair["last_valid_tick_age_seconds"] is not None:
+                            METRICS.last_valid_tick_age_seconds.labels(instrument).set(
+                                pair["last_valid_tick_age_seconds"]
+                            )
+                        await bus.set_feed_health(instrument, pair)
                     METRICS.collector_process_cpu_percent.set(process.cpu_percent())
                     METRICS.collector_process_memory_bytes.set(process.memory_info().rss)
                     await asyncio.sleep(5)
@@ -296,7 +605,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if "storage" in state:
                 await state["storage"].close()
 
-    app = FastAPI(title="Forex Collector", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Forex Collector", version="0.2.0", lifespan=lifespan)
 
     @app.get("/health/live")
     async def live() -> dict[str, Any]:
@@ -313,18 +622,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health/components")
     async def components() -> dict[str, Any]:
-        adapter_state, _, _, age = current_adapter_state()
-        bridge = bridge_health()
+        adapter_state, _, _, bridge, pairs = current_adapter_state()
         state["components"]["adapter"] = adapter_state.value
         return {
             "components": state["components"],
             "bridge": bridge,
-            "feed": {
-                "status": (
-                    "STALE" if age is None or age > config.stale_after_seconds else "HEALTHY"
-                ),
-                "last_valid_tick_age_seconds": age,
-            },
+            "pairs": pairs,
         }
 
     @app.get("/metrics")
@@ -337,24 +640,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         x_bridge_token: str | None = Header(default=None),
     ) -> dict[str, Any]:
-        client_host = request.client.host if request.client else None
-        if client_host not in {"127.0.0.1", "::1", "testclient"}:
-            raise HTTPException(status_code=403, detail="loopback clients only")
-        if not secrets.compare_digest(x_bridge_token or "", state["token"]):
-            raise HTTPException(status_code=401, detail="invalid bridge token")
+        require_bridge_access(request, x_bridge_token)
         touch_bridge_session(
             message.connection_id,
             message.session_id,
-            observer_ready=message.observer_ready,
-            counters={
-                "outbox_pending": message.outbox_pending,
-                "outbox_produced": message.outbox_produced,
-                "outbox_acknowledged": message.outbox_acknowledged,
-                "outbox_retries": message.outbox_retries,
-                "outbox_dropped": message.outbox_dropped,
-                "outbox_rejected": message.outbox_rejected,
-            },
+            heartbeat=message,
         )
+        if not message.observer_ready:
+            state["pipeline"].adapter.on_disconnect(message.connection_id, message.session_id)
+            for instrument in SUPPORTED_INSTRUMENTS:
+                if state["active_sources"][instrument] == message.session_id:
+                    state["active_sources"][instrument] = None
+            refresh_active_sources(datetime.now(UTC))
         return {"accepted": True, "server_time": datetime.now(UTC)}
 
     @app.post("/ingest/provider")
@@ -363,49 +660,131 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         x_bridge_token: str | None = Header(default=None),
     ) -> dict[str, Any]:
-        client_host = request.client.host if request.client else None
-        if client_host not in {"127.0.0.1", "::1", "testclient"}:
-            raise HTTPException(status_code=403, detail="loopback clients only")
-        if not secrets.compare_digest(x_bridge_token or "", state["token"]):
-            raise HTTPException(status_code=401, detail="invalid bridge token")
-        if message.semantics not in {"snapshot", "partial"}:
-            raise HTTPException(status_code=422, detail="semantics must be snapshot or partial")
-        touch_bridge_session(message.connection_id, message.session_id)
+        collector_received_at = datetime.now(UTC)
+        require_bridge_access(request, x_bridge_token)
+        if message.semantics != "snapshot":
+            raise HTTPException(
+                status_code=422,
+                detail="visible display observations must be full snapshots",
+            )
+        touch_bridge_session(
+            message.connection_id,
+            message.session_id,
+            identity={
+                "browser_run_id": message.browser_run_id,
+                "tab_id": message.tab_id,
+                "frame_id": message.frame_id,
+                "document_session_id": message.document_session_id,
+            },
+            observed_instrument=message.instrument,
+        )
+        refresh_active_sources(collector_received_at)
+        if state["active_sources"][message.instrument] != message.session_id:
+            METRICS.standby_source_observations_total.labels(message.instrument).inc()
+            return {
+                "accepted": True,
+                "suppressed": True,
+                "reason": "STANDBY_SOURCE",
+                "event_id": message.event_id,
+                "instrument": message.instrument,
+                "valid_ticks": 0,
+                "quality_events": 0,
+            }
         if await state["storage"].has_raw(message.event_id):
             return {
                 "accepted": True,
                 "duplicate": True,
                 "event_id": message.event_id,
+                "instrument": message.instrument,
                 "valid_ticks": 0,
                 "quality_events": 0,
             }
+        persisted_last_sequence = await state["storage"].last_observation_sequence(
+            message.document_session_id, message.instrument
+        )
         envelope = ProviderEnvelope(
             event_id=message.event_id,
             connection_id=message.connection_id,
             session_id=message.session_id,
-            received_at=message.received_at,
-            semantics=message.semantics,  # type: ignore[arg-type]
-            payload=message.payload,
-            channel_metadata=message.channel_metadata,
+            document_session_id=message.document_session_id,
+            observation_sequence=message.observation_sequence,
+            browser_observed_at=message.browser_observed_at,
+            collector_received_at=collector_received_at,
+            received_at=message.browser_observed_at,
+            semantics="snapshot",
+            payload={
+                "instrument": message.instrument,
+                "bid": message.payload.get("bid"),
+                "ask": message.payload.get("ask"),
+                "provider_event_time": None,
+                "sequence": None,
+                "observation_source": "visible_dom",
+                "source": "VISIBLE_DOM",
+                "observation_level": "DISPLAY_QUOTE",
+                "is_provider_tick": False,
+            },
+            channel_metadata={
+                **{
+                    key: value
+                    for key, value in message.channel_metadata.items()
+                    if key
+                    not in {
+                        "source",
+                        "observation_level",
+                        "is_provider_tick",
+                        "provider_event_time",
+                        "collector_received_at",
+                    }
+                },
+                "browser_run_id": message.browser_run_id,
+                "tab_id": message.tab_id,
+                "frame_id": message.frame_id,
+                "document_session_id": message.document_session_id,
+                "source": "VISIBLE_DOM",
+                "observation_level": "DISPLAY_QUOTE",
+                "is_provider_tick": False,
+                "persisted_last_observation_sequence": persisted_last_sequence,
+            },
         )
         loop = asyncio.get_running_loop()
-        result: asyncio.Future[tuple[int, int]] = loop.create_future()
+        result: asyncio.Future[tuple[int, list[QualityStatus]]] = loop.create_future()
         try:
-            await asyncio.wait_for(state["queue"].put((envelope, result)), timeout=0.25)
+            await asyncio.wait_for(
+                state["queue"].put(message.instrument, (envelope, result)),
+                timeout=0.25,
+            )
         except TimeoutError as exc:
-            METRICS.collector_dropped_events_total.inc()
-            raise HTTPException(status_code=503, detail="bounded ingestion queue full") from exc
-        METRICS.collector_queue_depth.set(state["queue"].qsize())
-        valid, quality = await result
-        state["last_event"] = datetime.now(UTC)
+            METRICS.collector_dropped_events_total.labels(message.instrument).inc()
+            raise HTTPException(
+                status_code=503,
+                detail=f"bounded {message.instrument} ingestion queue full",
+            ) from exc
+        METRICS.collector_queue_depth.labels(message.instrument).set(
+            state["queue"].depth(message.instrument)
+        )
+        valid, qualities = await result
+        now = datetime.now(UTC)
+        state["recent_observations"][message.instrument].append(now)
+        METRICS.display_observations_total.labels(message.instrument).inc()
         if valid:
-            state["last_tick"] = datetime.now(UTC)
+            state["last_tick"][message.instrument] = now
+        counters = state["pair_counters"][message.instrument]
+        for classification in qualities:
+            if classification == QualityStatus.DUPLICATE:
+                counters["duplicate_events"] += 1
+            elif classification == QualityStatus.OUT_OF_ORDER:
+                counters["out_of_order_events"] += 1
+            elif classification == QualityStatus.STALE:
+                counters["stale_events"] += 1
+            elif classification in {QualityStatus.BAD, QualityStatus.UNPARSEABLE}:
+                counters["invalid_events"] += 1
         return {
             "accepted": True,
             "duplicate": False,
             "event_id": message.event_id,
+            "instrument": message.instrument,
             "valid_ticks": valid,
-            "quality_events": quality,
+            "quality_events": len(qualities),
         }
 
     @app.post("/ingest/discovery")
@@ -414,11 +793,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         x_bridge_token: str | None = Header(default=None),
     ) -> dict[str, Any]:
-        client_host = request.client.host if request.client else None
-        if client_host not in {"127.0.0.1", "::1", "testclient"}:
-            raise HTTPException(status_code=403, detail="loopback clients only")
-        if not secrets.compare_digest(x_bridge_token or "", state["token"]):
-            raise HTTPException(status_code=401, detail="invalid bridge token")
+        require_bridge_access(request, x_bridge_token)
         touch_bridge_session(message.connection_id, message.session_id)
         if await state["storage"].has_raw(message.event_id):
             return {"accepted": True, "duplicate": True, "event_id": message.event_id}
@@ -442,7 +817,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         await state["storage"].store_raw(raw)
         await state["bus"].publish("raw.provider.ic_markets", raw)
-        state["last_event"] = datetime.now(UTC)
         return {
             "accepted": True,
             "duplicate": False,

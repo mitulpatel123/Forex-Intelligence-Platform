@@ -63,6 +63,9 @@ jobs:
       - name: Ruff format check
         run: uv run ruff format --check .
 
+      - name: Generated contract parity
+        run: make check-generated
+
       - name: Ruff lint
         run: uv run ruff check .
 
@@ -73,7 +76,7 @@ jobs:
         run: pnpm extension:typecheck
 
       - name: Python tests
-        run: uv run pytest -q packages adapters
+        run: uv run pytest -q packages adapters apps/collector/tests
 
       - name: Extension and manifest safety tests
         run: pnpm extension:test
@@ -82,6 +85,15 @@ jobs:
         run: |
           uv run python scripts/migrate.py
           uv run pytest -q tests/integration
+
+      - name: End-to-end smoke test
+        env:
+          FIP_SMOKE_REUSE_DATA_SERVICES: "true"
+          FIP_BIND_HOST: "0.0.0.0"
+        run: make smoke
+
+      - name: Bounded four-pair load test
+        run: make load-test
 
       - name: Secret scan
         run: |

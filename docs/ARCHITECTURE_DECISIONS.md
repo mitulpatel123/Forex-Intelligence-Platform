@@ -1,11 +1,12 @@
 # Architecture decisions
 
-- ADR-001 records the observed binary MT5 transport and selects the narrow visible
-  EURUSD row as the compliant collection fallback.
-- A single async collector replaces unnecessary microservices.
+- [ADR-001](adr/ADR-001-ic-markets-collection-method.md) selects the narrow visible
+  display-quote fallback for the opaque binary MT5 transport.
+- [ADR-002](adr/ADR-002-multi-instrument-contract-and-fairness.md) freezes v0.1,
+  introduces registry-backed v0.2, and applies per-pair fairness at both bounded
+  queues.
 - Decimal strings cross JSON boundaries and PostgreSQL uses `NUMERIC`.
-- Redis is live/streaming state; TimescaleDB is durable history.
-- Raw records precede normalization and carry SHA-256 hashes and trace IDs.
-- Unknown message semantics fail closed; the unavailable provider timestamp remains
-  null and is reported as a warning rather than guessed.
-- Test containers use ports 6380 and 55432 because local 6379 and 5432/5433 were occupied.
+- Raw records precede normalization and carry stable event IDs, hashes, and traces.
+- Redis is current/streaming state; TimescaleDB is durable history.
+- Unknown semantics fail closed. Missing provider time remains null and becomes a
+  quality warning, never an invented timestamp.

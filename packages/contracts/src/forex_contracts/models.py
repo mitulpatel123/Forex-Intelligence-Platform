@@ -6,9 +6,15 @@ import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
+
+from forex_contracts.instruments_generated import (
+    SupportedInstrument,
+    instrument_spec,
+    is_supported_instrument,
+)
 
 
 def utc_now() -> datetime:
@@ -56,7 +62,7 @@ class EventBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     event_id: str = Field(default_factory=new_event_id)
-    schema_version: Literal["0.1"] = "0.1"
+    schema_version: str
     event_type: str
     source: str = "WEB_TERMINAL"
     observation_level: Literal["DISPLAY_QUOTE", "PROVIDER_TICK"] = "PROVIDER_TICK"
@@ -80,10 +86,13 @@ class EventBase(BaseModel):
     def timestamps_are_utc(cls, value: datetime | None) -> datetime | None:
         if value is not None and (value.tzinfo is None or value.utcoffset() is None):
             raise ValueError("timestamps must be timezone-aware UTC")
-        return value
+        return value.astimezone(UTC) if value is not None else None
 
 
-class PriceTick(EventBase):
+class PriceTickV01(EventBase):
+    """Frozen Milestone 1 EURUSD contract."""
+
+    schema_version: Literal["0.1"] = "0.1"
     event_type: Literal["PRICE_TICK"] = "PRICE_TICK"
     instrument: Literal["EURUSD"] = "EURUSD"
     bid: Decimal
@@ -97,7 +106,7 @@ class PriceTick(EventBase):
     changed_fields: list[Literal["bid", "ask"]]
 
     @model_validator(mode="after")
-    def validate_quote_math(self) -> PriceTick:
+    def validate_quote_math(self) -> PriceTickV01:
         if not self.bid.is_finite() or not self.ask.is_finite():
             raise ValueError("prices must be finite")
         if self.bid <= 0 or self.ask <= 0:
@@ -117,7 +126,7 @@ class PriceTick(EventBase):
         return self
 
     @classmethod
-    def from_quote(cls, *, bid: Decimal, ask: Decimal, **kwargs: Any) -> PriceTick:
+    def from_quote(cls, *, bid: Decimal, ask: Decimal, **kwargs: Any) -> PriceTickV01:
         spread = ask - bid
         pip_size = Decimal("0.0001")
         return cls(
@@ -129,6 +138,104 @@ class PriceTick(EventBase):
             pip_size=pip_size,
             **kwargs,
         )
+
+
+class PriceTickV02(EventBase):
+    """Milestone 2 registry-backed four-pair display quote."""
+
+    schema_version: Literal["0.2"] = "0.2"
+    event_type: Literal["PRICE_TICK"] = "PRICE_TICK"
+    instrument: SupportedInstrument
+    base_currency: str
+    quote_currency: str
+    bid: Decimal
+    ask: Decimal
+    mid: Decimal
+    spread: Decimal
+    spread_pips: Decimal
+    pip_size: Decimal
+    is_snapshot: bool
+    changed_fields: list[Literal["bid", "ask"]]
+    browser_observed_at: datetime | None = None
+    collector_received_at: datetime | None = None
+    document_session_id: str | None = None
+    observation_sequence: int | None = Field(default=None, ge=1)
+    browser_to_collector_delay_ms: float | None = None
+    collector_processing_delay_ms: float | None = None
+    total_local_pipeline_delay_ms: float | None = None
+
+    @field_validator("browser_observed_at", "collector_received_at")
+    @classmethod
+    def local_timestamps_are_utc(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("timestamps must be timezone-aware UTC")
+        return value.astimezone(UTC) if value is not None else None
+
+    @model_validator(mode="after")
+    def validate_quote_math(self) -> PriceTickV02:
+        if not is_supported_instrument(self.instrument):
+            raise ValueError("instrument must exist in the canonical registry")
+        spec = instrument_spec(self.instrument)
+        expected_pip = spec["pip_size"]
+        if self.base_currency != spec["base_currency"]:
+            raise ValueError("base_currency does not match instrument registry")
+        if self.quote_currency != spec["quote_currency"]:
+            raise ValueError("quote_currency does not match instrument registry")
+        if self.pip_size != expected_pip:
+            raise ValueError("pip_size does not match instrument registry")
+        if not self.bid.is_finite() or not self.ask.is_finite():
+            raise ValueError("prices must be finite")
+        if self.bid <= 0 or self.ask <= 0:
+            raise ValueError("prices must be positive")
+        if self.ask < self.bid:
+            raise ValueError("ask must be greater than or equal to bid")
+        expected_spread = self.ask - self.bid
+        expected_mid = (self.bid + self.ask) / Decimal("2")
+        if self.spread != expected_spread:
+            raise ValueError("spread does not equal ask - bid")
+        if self.mid != expected_mid:
+            raise ValueError("mid does not equal (bid + ask) / 2")
+        if self.spread_pips != expected_spread / self.pip_size:
+            raise ValueError("spread_pips does not equal spread / pip_size")
+        return self
+
+    @classmethod
+    def from_quote(
+        cls,
+        *,
+        instrument: SupportedInstrument,
+        bid: Decimal,
+        ask: Decimal,
+        **kwargs: Any,
+    ) -> PriceTickV02:
+        spec = instrument_spec(instrument)
+        pip_size = spec["pip_size"]
+        assert isinstance(pip_size, Decimal)
+        spread = ask - bid
+        return cls(
+            instrument=instrument,
+            base_currency=str(spec["base_currency"]),
+            quote_currency=str(spec["quote_currency"]),
+            bid=bid,
+            ask=ask,
+            mid=(bid + ask) / Decimal("2"),
+            spread=spread,
+            spread_pips=spread / pip_size,
+            pip_size=pip_size,
+            **kwargs,
+        )
+
+
+PriceTick = PriceTickV02
+PriceTickCompatible = Annotated[
+    PriceTickV01 | PriceTickV02,
+    Field(discriminator="schema_version"),
+]
+_PRICE_TICK_ADAPTER = TypeAdapter(PriceTickCompatible)
+
+
+def parse_price_tick(value: dict[str, Any]) -> PriceTickV01 | PriceTickV02:
+    return _PRICE_TICK_ADAPTER.validate_python(value)
 
 
 class RawProviderEvent(BaseModel):
@@ -144,6 +251,11 @@ class RawProviderEvent(BaseModel):
     instrument: str | None = None
     provider_event_time: datetime | None = None
     received_at: datetime
+    browser_observed_at: datetime | None = None
+    collector_received_at: datetime | None = None
+    document_session_id: str | None = None
+    observation_sequence: int | None = Field(default=None, ge=1)
+    browser_to_collector_delay_ms: float | None = None
     payload_content_type: str
     payload: str | dict[str, Any]
     content_hash: str
@@ -151,6 +263,18 @@ class RawProviderEvent(BaseModel):
     redaction_status: Literal["SANITIZED", "NOT_REQUIRED"]
     redactions: list[str] = Field(default_factory=list)
     trace_id: str = Field(default_factory=new_event_id)
+
+    @field_validator(
+        "provider_event_time",
+        "received_at",
+        "browser_observed_at",
+        "collector_received_at",
+    )
+    @classmethod
+    def raw_timestamps_are_utc(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("timestamps must be timezone-aware UTC")
+        return value.astimezone(UTC) if value is not None else None
 
 
 class DataQualityEvent(BaseModel):
@@ -194,7 +318,7 @@ class FeedHealth(BaseModel):
     schema_version: Literal["0.1"] = "0.1"
     event_type: Literal["FEED_HEALTH"] = "FEED_HEALTH"
     provider: Literal["IC_MARKETS"] = "IC_MARKETS"
-    instrument: Literal["EURUSD"] = "EURUSD"
+    instrument: SupportedInstrument
     event_rate: float
     last_event_age: float
     invalid_ratio: float
@@ -205,5 +329,5 @@ class FeedHealth(BaseModel):
     p99_ingest_latency: float
     queue_lag: int
     storage_lag: int
-    status: Literal["HEALTHY", "DEGRADED", "STALE", "BLOCKED"]
+    status: Literal["INITIALIZING", "HEALTHY", "STALE", "AMBIGUOUS", "MISSING", "DEGRADED"]
     timestamp: datetime = Field(default_factory=utc_now)

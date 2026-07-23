@@ -4,6 +4,7 @@ import {
   CHANNEL,
   MAX_PAYLOAD_BYTES,
   isCapturedFrame,
+  isPairStatusFrame,
   redactText,
 } from "../src/schema";
 
@@ -64,5 +65,39 @@ describe("bridge validation", () => {
     expect(redacted).not.toContain("12345");
     expect(redacted).not.toContain("session-secret");
     expect(redacted).toContain("1.13743");
+  });
+
+  it("accepts only an exact four-pair observer status frame", () => {
+    const pairs = Object.fromEntries(
+      ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD"].map((instrument) => [
+        instrument,
+        { status: "READY", lastObservationAt: "2026-07-23T14:30:01Z" },
+      ]),
+    );
+    const statusFrame = {
+      channel: CHANNEL,
+      frameType: "observer-pair-status",
+      receivedAt: "2026-07-23T14:30:01Z",
+      pairs,
+    };
+    expect(isPairStatusFrame(statusFrame, allowedOrigin)).toBe(true);
+    expect(
+      isPairStatusFrame(
+        { ...statusFrame, pairs: { ...pairs, XAUUSD: pairs.EURUSD } },
+        allowedOrigin,
+      ),
+    ).toBe(false);
+    expect(
+      isPairStatusFrame(
+        {
+          ...statusFrame,
+          pairs: {
+            ...pairs,
+            USDJPY: { status: "READY", lastObservationAt: "not-a-time" },
+          },
+        },
+        allowedOrigin,
+      ),
+    ).toBe(false);
   });
 });

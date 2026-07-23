@@ -14,6 +14,10 @@ class ProviderEnvelope(BaseModel):
     event_id: str | None = None
     connection_id: str
     session_id: str
+    document_session_id: str | None = None
+    observation_sequence: int | None = None
+    browser_observed_at: datetime | None = None
+    collector_received_at: datetime | None = None
     received_at: datetime
     payload: dict[str, Any] | str
     payload_content_type: str = "application/json"

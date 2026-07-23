@@ -2,94 +2,56 @@
 
 Discovery date: 2026-07-23 UTC. Target: `https://webtrader-sc.ic.com/`.
 
-## Observed delivery path
+## Evidence and selected path
 
-Authenticated observation confirmed that the IC Markets wrapper embeds the selected
-MetaTrader 5 terminal as a cross-origin iframe. The validated session used the
-`mt503web.icmarkets.com` terminal host and displayed EURUSD in Market Watch.
+Authenticated observation confirmed that the IC Markets wrapper embeds a
+cross-origin MetaTrader 5 terminal. The terminal uses an opaque binary WebSocket
+provider codec. This project does not reverse engineer that codec, bypass provider
+controls, inspect credentials, or retain broad binary traffic.
 
-The terminal's public JavaScript bundle creates:
+The evidence-backed path observes only rendered Market Watch cells for:
 
 ```text
-wss://<terminal-host>/terminal
+EURUSD  GBPUSD  USDJPY  AUDUSD
 ```
 
-and sets `WebSocket.binaryType = "arraybuffer"`. Live browser observation confirmed
-the terminal receives and renders changing EURUSD bid/ask values. The binary
-messages use the terminal's provider codec and do not expose a safe literal EURUSD
-text candidate. This project does not reverse engineer encryption, bypass the
-provider codec, inspect credentials, or persist broad binary traffic.
+The generic observer maps exact Symbol/Bid/Ask headers, normalizes exact symbol
+text, and reads only the matching cells. It does not inspect charts, order tickets,
+positions, balances, or account controls. Pair precision and broad bounds come from
+the canonical instrument registry.
 
-## Selected collection method
+Hidden responsive duplicates are ignored. Identical visible duplicates are
+accepted only when their quotes agree. Conflicting duplicates mark only that pair
+`AMBIGUOUS`. Missing/malformed rows do not block other pairs. Row/table/document
+replacement triggers bounded reacquisition.
 
-The extension injects at `document_start` into the allowlisted terminal frames.
-Normal collection does not inspect WebSocket payloads. Binary/text discovery is an
-explicit setting that defaults to OFF. The evidence-backed live path locates a
-Market Watch table with exact Symbol, Bid, and Ask headers, acquires its unambiguous
-EURUSD row once, and then observes only that row:
+## Semantics and qualification
 
-- the symbol must equal `EURUSD`;
-- bid and ask must be visible decimal values;
-- both must be positive and within an EUR/USD plausibility range;
-- ask must be greater than or equal to bid;
-- the pair is emitted only when bid or ask changes;
-- no account, balance, order, cookie, token, or credential field is read;
-- no trading control is clicked or modified.
+Every changed displayed bid/ask is a full snapshot. The UI exposes neither a
+provider timestamp nor sequence; therefore both remain null. Normalized output
+keeps `PROVIDER_TIMESTAMP_UNAVAILABLE` and is qualified:
 
-Each observation receives a UUID and enters a bounded persistent outbox. The
-service worker returns its asynchronous message promise, uses a five-second fetch
-timeout, retries temporary failures with the same UUID, and removes the event only
-after authenticated collector acknowledgement. Pending/retry/drop/ack counters are
-visible in the popup and reported by heartbeat.
+```text
+source = VISIBLE_DOM
+observation_level = DISPLAY_QUOTE
+is_provider_tick = false
+```
 
-Raw storage precedes normalization. Redis current state/streams, TimescaleDB
-history, Prometheus, and Grafana receive the resulting events.
+These feeds are not provider-native ticks and do not claim provider-level
+completeness, sequencing, or latency.
 
-## Timestamp and update semantics
+## Reliability and privacy
 
-The displayed Market Watch row exposes a full bid/ask pair but not a provider event
-timestamp or sequence. Each changed display is therefore modeled as a full snapshot.
-The browser observation time is used only for receipt and ordering. The standard
-event keeps `provider_event_time = null`, `sequence = null`, quality status
-`WARNING`, and flag `PROVIDER_TIMESTAMP_UNAVAILABLE`. No provider time is invented.
-It is also qualified as `source=VISIBLE_DOM`,
-`observation_level=DISPLAY_QUOTE`, and `is_provider_tick=false`.
+- Account-free identity distinguishes browser run, tab, frame, and document.
+- Stable UUIDs survive retry; collector idempotency handles lost acknowledgements.
+- Persistent per-pair outbox groups and collector queues use fair round-robin
+  service with FIFO within a pair.
+- Two-second heartbeats separate browser connection from each pair's freshness.
+- WebSocket discovery is OFF by default, bounded, and redacted twice when enabled.
+- No last discovery frame is retained in extension storage.
+- The extension contains no trading or account-control interaction.
 
-Provider-level partial-update, heartbeat, and sequence semantics remain opaque
-behind the binary codec. The adapter's deterministic partial, duplicate,
-out-of-order, stale-state, and validation policies remain covered by replay tests.
-
-## Live validation evidence
-
-On 2026-07-23 the extension popup reported `receiving` while the authenticated
-terminal displayed EURUSD. The validated pipeline produced:
-
-- matching visible and normalized bid/ask values;
-- immutable sanitized raw events with `capture_method=visible_dom`;
-- `PRICE_TICK` v0.1 events in Redis and TimescaleDB;
-- current quote updates in `latest:quote:IC_MARKETS:EURUSD`;
-- no invalid, duplicate, out-of-order, or stale events during the validation window;
-- a fresh/healthy feed, Prometheus target `up`, and healthy Grafana.
-
-A reviewed market-data-only sample is committed as
-`adapters/ic_markets/fixtures/live_visible_dom.jsonl`. It contains no account or
-authentication data.
-
-## Reliability and privacy controls
-
-- Account-free IDs distinguish browser run, tab, frame, and document session.
-- A two-second authenticated heartbeat separates bridge connection and observer
-  readiness from quote freshness.
-- Server-side recursive redaction runs even when the extension already redacted a
-  supervised discovery payload.
-- Normal collection never stores a last WebSocket frame in extension storage.
-- The outbox is capped at 1,000 events and exposes every explicit drop.
-- Collector idempotency uses the browser observation UUID, including ack-loss retry.
-
-## Public wrapper evidence
-
-An unauthenticated HTTP GET returned the CloudFront/S3 wrapper document. Its
-SHA-256 was
-`74451c722239adfc5b7e333732b8165ef5caba53f168fd5e9bbc62522b3f6b39`.
-The wrapper lists the global MT5 frame hosts `mt5web`, `mt502web`, `mt503web`,
-`mt504web`, `mt506web`, and `mt5demo` under `icmarkets.com`.
+The original Milestone 1 EURUSD evidence remains in
+`adapters/ic_markets/fixtures/live_visible_dom.jsonl`. Milestone 2 adds four
+sanitized pair fixtures and a mixed replay fixture; these are deterministic test
+evidence, not fabricated live evidence.

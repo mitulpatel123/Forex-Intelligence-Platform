@@ -1,3 +1,10 @@
+from forex_contracts.instruments_generated import (
+    INSTRUMENT_SPECS,
+    SUPPORTED_INSTRUMENTS,
+    SupportedInstrument,
+    instrument_spec,
+    is_supported_instrument,
+)
 from forex_contracts.models import (
     AdapterState,
     AdapterStatus,
@@ -5,8 +12,12 @@ from forex_contracts.models import (
     DataQualityEvent,
     FeedHealth,
     PriceTick,
+    PriceTickCompatible,
+    PriceTickV01,
+    PriceTickV02,
     QualityStatus,
     RawProviderEvent,
+    parse_price_tick,
 )
 
 __all__ = [
@@ -15,7 +26,16 @@ __all__ = [
     "AssetClass",
     "DataQualityEvent",
     "FeedHealth",
+    "INSTRUMENT_SPECS",
     "PriceTick",
+    "PriceTickCompatible",
+    "PriceTickV01",
+    "PriceTickV02",
     "QualityStatus",
     "RawProviderEvent",
+    "SUPPORTED_INSTRUMENTS",
+    "SupportedInstrument",
+    "instrument_spec",
+    "is_supported_instrument",
+    "parse_price_tick",
 ]

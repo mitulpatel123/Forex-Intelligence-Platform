@@ -1,20 +1,22 @@
 # Troubleshooting
 
-- Docker socket missing: open Docker Desktop and wait for `docker info`.
-- Port collision: keep project defaults 6380/55432/8001/9090/3000 or adjust both
-  Compose and `.env`.
-- Collector not ready: inspect Redis/Timescale health with `docker compose ps`, then
-  run `make migrate`.
-- Prometheus target down: start `make run`; the collector is intentionally not a
-  container.
-- Extension says error: start the collector, confirm the 0600 token exists, and
-  save it in extension Options.
-- Pending outbox does not drain: keep the terminal open, verify collector readiness
-  and token, and inspect retry/dropped counters. Pending events survive worker
-  suspension and extension service-worker restarts.
-- Waiting for EUR/USD: confirm the visible Market Watch table has exact Symbol, Bid,
-  and Ask headers and one unambiguous EURUSD row.
-- Binary discovery: keep it OFF during normal operation; never invent or bypass a
+- Docker unavailable: open Docker Desktop and wait for `docker info`.
+- Collector not ready: inspect `docker compose ps`, then run `make migrate`.
+- Extension `error`: start the collector and verify the 0600 local token is saved
+  in extension Options.
+- `disconnected`: distinguish a missing bridge heartbeat from pair freshness at
+  `/health/components`.
+- Pair `MISSING`: make that exact Market Watch row visible and confirm the table has
+  exact Symbol, Bid, and Ask headers.
+- Pair `AMBIGUOUS`: remove conflicting visible responsive/duplicate layouts.
+  Identical duplicates and hidden layouts are accepted/ignored automatically.
+- Pair `STALE`: confirm its displayed values are updating; the other pairs should
+  remain healthy.
+- Pending outbox: verify readiness/token and inspect that pair's retry/drop/reject
+  counters. Pending events survive service-worker and collector restart.
+- USDJPY rejected: display precision must be 2–4 decimals and its pip is `0.01`.
+- Generated drift: run `make generate-contracts`, then `make check-generated`.
+- Prometheus target down: start `make run`; the collector is a host process.
+- Discovery: leave it OFF during normal operation; never invent or bypass a
   provider decoder.
-- Stale partials: obtain a fresh snapshot in the same session; reconnect clears state.
-- Database data reset: use replay `--publish --reset` only for the local test stack.
+- Test reset: use replay `--publish --reset` only against the local test stack.

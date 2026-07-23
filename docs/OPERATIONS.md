@@ -1,6 +1,6 @@
 # Operations
 
-Setup/start:
+## Start and replay
 
 ```bash
 cp .env.example .env
@@ -10,51 +10,62 @@ make migrate
 make run
 ```
 
-Replay:
-
 ```bash
-uv run forex-replay adapters/ic_markets/fixtures/replay_bridge.jsonl --speed max --publish
+uv run forex-replay \
+  adapters/ic_markets/fixtures/replay_four_pair_mixed.jsonl \
+  --speed max --publish
 ```
 
-Supported speeds are `max`, `realtime`, `step`, and `xN`. Add `--reset` only with
-`--publish` to clear test tables/streams. Stop with Ctrl-C, then `make infra-down`.
+Replay speeds are `max`, `realtime`, `step`, and `xN`. Use `--reset` only with
+`--publish` against the local test stack.
 
-Extension build/load:
+## Build and load the extension
 
 ```bash
 pnpm extension:build
 ```
 
-Open `chrome://extensions`, enable Developer mode, load
-`apps/browser_bridge` unpacked, start the collector, open extension Options, and
-copy the local token from `.local/bridge-token`. This token is only for localhost;
-never enter an IC Markets credential. Manually log in/MFA and display EURUSD in
-Market Watch. The popup should change from `waiting for EUR/USD` to `receiving`.
-`Pending` should normally return to zero, `Acknowledged` should increase, and
-`Dropped`/`Rejected` should remain zero. Do not use trading controls.
+Open `chrome://extensions`, enable Developer mode, and load
+`apps/browser_bridge` unpacked. Open extension Options and copy the local token from
+`.local/bridge-token`. This is a localhost token, not an IC Markets credential.
 
-Leave **binary/text WebSocket discovery OFF** in Options. Enable it only for a short,
-supervised discovery session; normal collection never decodes binary frames.
+The user manually logs in and completes MFA. Add `EURUSD`, `GBPUSD`, `USDJPY`, and
+`AUDUSD` to Market Watch and resize it so every row is rendered. Reload the
+unpacked extension. Do not use trade or account controls.
 
-Verify the live path:
+The popup shows overall bridge status and status/pending/retry/drop/reject values
+per pair. All four should reach `READY`, pending should settle to zero, and drops
+and rejections should stay zero. Discovery mode must remain OFF for normal use.
+
+## Verify
 
 ```bash
 curl -fsS http://127.0.0.1:8001/health/components
-docker compose exec -T redis redis-cli XLEN normalized.price_tick
-docker compose exec -T timescaledb psql -U forex -d forex -c \
-  "SELECT received_time,bid,ask,quality_status FROM price_ticks ORDER BY received_time DESC LIMIT 5"
+curl -fsS http://127.0.0.1:8001/metrics
+for pair in EURUSD GBPUSD USDJPY AUDUSD; do
+  docker compose exec -T redis redis-cli GET \
+    "latest:quote:IC_MARKETS:$pair"
+done
+docker compose exec -T timescaledb psql -U forex -d forex \
+  -f /dev/stdin < scripts/verify_milestone_2.sql
 ```
 
-`provider_event_time` is null and quality is `WARNING` for this collection method
-because the visible terminal row does not expose the provider timestamp or sequence.
-The event is labeled `source=VISIBLE_DOM`, `observation_level=DISPLAY_QUOTE`, and
-`is_provider_tick=false`.
+Each live row should be `schema_version=0.2`, `source=VISIBLE_DOM`,
+`observation_level=DISPLAY_QUOTE`, `is_provider_tick=false`, with null provider
+time and `PROVIDER_TIMESTAMP_UNAVAILABLE`.
 
-For a soak check, record popup counters before and after the window and verify:
+## Restart recovery
 
-```text
-acknowledged delta = unique live raw-event delta
-pending = 0
-dropped = 0
-rejected = 0
-```
+While collection is active, stop only the collector with Ctrl-C. The extension's
+per-pair pending counts should rise. Restart `make run`; the same stable event IDs
+must retry, pending must return to zero, and SQL must retain one raw/normalized row
+per event ID.
+
+## Pair isolation
+
+Temporarily remove or hide one Market Watch pair. Only that pair should become
+`MISSING` or `STALE`; the other three must continue. Restore it and confirm
+automatic reacquisition. Conflicting duplicate ambiguity is validated with test
+fixtures, not by unsafe page manipulation.
+
+Stop the collector with Ctrl-C and infrastructure with `make infra-down`.

@@ -9,14 +9,26 @@ import {
 } from "./bridge-protocol";
 import { PersistentOutbox, type OutboxEvent } from "./outbox";
 import { isCapturedFrame } from "./schema";
+import {
+  SUPPORTED_INSTRUMENTS,
+  type SupportedInstrument,
+} from "./instruments.generated";
+import type { PairObserverState } from "./dom-observer";
 
-type BridgeState = "disconnected" | "waiting for EUR/USD" | "receiving" | "error";
+type BridgeState = "disconnected" | "waiting for quotes" | "receiving" | "error";
+type PairStatuses = Record<SupportedInstrument, PairObserverState>;
 
 const RETRY_ALARM = "fip-bridge-outbox-retry";
 const MAX_OUTBOX_SIZE = 1_000;
 const FETCH_TIMEOUT_MS = 5_000;
 let state: BridgeState = "disconnected";
 let browserRunIdPromise: Promise<string> | null = null;
+let latestPairStatuses = Object.fromEntries(
+  SUPPORTED_INSTRUMENTS.map((instrument) => [
+    instrument,
+    { status: "MISSING", lastObservationAt: null },
+  ]),
+) as PairStatuses;
 
 async function setState(next: BridgeState): Promise<void> {
   state = next;
@@ -116,6 +128,7 @@ async function sendHeartbeat(
   sender: chrome.runtime.MessageSender,
   documentSessionId: string,
   observerReady: boolean,
+  pairStatuses: PairStatuses,
 ): Promise<void> {
   const identity = await identityFor(sender, documentSessionId);
   const snapshot = await outbox.snapshot();
@@ -123,6 +136,10 @@ async function sendHeartbeat(
     const response = await authenticatedFetch(
       HEARTBEAT_URL,
       {
+        browser_run_id: identity.browserRunId,
+        tab_id: identity.tabId,
+        frame_id: identity.frameId,
+        document_session_id: identity.documentSessionId,
         connection_id: identity.connectionId,
         session_id: identity.sessionId,
         observer_ready: observerReady,
@@ -133,6 +150,22 @@ async function sendHeartbeat(
         outbox_retries: snapshot.stats.retries,
         outbox_dropped: snapshot.stats.dropped,
         outbox_rejected: snapshot.stats.rejected,
+        pairs: Object.fromEntries(
+          SUPPORTED_INSTRUMENTS.map((instrument) => [
+            instrument,
+            {
+              target_status: pairStatuses[instrument].status,
+              last_observation_time: pairStatuses[instrument].lastObservationAt,
+              outbox_pending: snapshot.pendingByInstrument[instrument],
+              outbox_produced: snapshot.stats.byInstrument[instrument].produced,
+              outbox_acknowledged:
+                snapshot.stats.byInstrument[instrument].acknowledged,
+              outbox_retries: snapshot.stats.byInstrument[instrument].retries,
+              outbox_dropped: snapshot.stats.byInstrument[instrument].dropped,
+              outbox_rejected: snapshot.stats.byInstrument[instrument].rejected,
+            },
+          ]),
+        ),
       },
       3_000,
     );
@@ -158,11 +191,24 @@ async function queueCapturedFrame(
   const quote = parseVisibleQuote(frame);
   let event: OutboxEvent;
   if (quote) {
+    if (
+      !Number.isSafeInteger(candidate.observationSequence) ||
+      (candidate.observationSequence as number) < 1
+    ) {
+      return { accepted: false, reason: "invalid observation sequence" };
+    }
     event = {
       eventId,
       kind: "visible_quote",
+      instrument: quote.instrument,
       url: PROVIDER_INGEST_URL,
-      body: providerRequest(eventId, identity, frame, quote),
+      body: providerRequest(
+        eventId,
+        identity,
+        frame,
+        quote,
+        candidate.observationSequence as number,
+      ),
       attempts: 0,
       nextAttemptAt: Date.now(),
     };
@@ -174,6 +220,7 @@ async function queueCapturedFrame(
     event = {
       eventId,
       kind: "discovery",
+      instrument: null,
       url: DISCOVERY_INGEST_URL,
       body: discoveryRequest(eventId, identity, frame),
       attempts: 0,
@@ -194,7 +241,15 @@ async function handleMessage(
   if (candidate.type === "GET_STATUS") {
     const snapshot = await outbox.snapshot();
     const { discoveryMode = false } = await chrome.storage.local.get("discoveryMode");
-    return { state, discoveryMode, ...snapshot.stats, pending: snapshot.pending };
+    return {
+      state,
+      discoveryMode,
+      ...snapshot.stats,
+      pending: snapshot.pending,
+      pendingByInstrument: snapshot.pendingByInstrument,
+      byInstrument: snapshot.stats.byInstrument,
+      pairStatuses: latestPairStatuses,
+    };
   }
   if (
     (candidate.type === "OBSERVER_READY" ||
@@ -204,9 +259,26 @@ async function handleMessage(
   ) {
     const observerReady =
       candidate.type === "BRIDGE_HEARTBEAT" && candidate.observerReady === true;
-    if (candidate.type === "OBSERVER_READY") await setState("waiting for EUR/USD");
+    if (candidate.type === "OBSERVER_READY") await setState("waiting for quotes");
     if (candidate.type === "OBSERVER_STOPPED") await setState("disconnected");
-    await sendHeartbeat(sender, candidate.documentSessionId, observerReady);
+    const incoming =
+      typeof candidate.pairStatuses === "object" && candidate.pairStatuses !== null
+        ? (candidate.pairStatuses as Record<string, PairObserverState>)
+        : {};
+    const pairStatuses = Object.fromEntries(
+      SUPPORTED_INSTRUMENTS.map((instrument) => {
+        const pair = incoming[instrument];
+        return [
+          instrument,
+          pair &&
+          ["FOUND", "READY", "MISSING", "AMBIGUOUS", "STALE"].includes(pair.status)
+            ? pair
+            : { status: "MISSING", lastObservationAt: null },
+        ];
+      }),
+    ) as PairStatuses;
+    latestPairStatuses = pairStatuses;
+    await sendHeartbeat(sender, candidate.documentSessionId, observerReady, pairStatuses);
     return { accepted: true };
   }
   if (candidate.type === "CAPTURED_FRAME") return queueCapturedFrame(candidate, sender);

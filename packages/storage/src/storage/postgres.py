@@ -44,11 +44,17 @@ class PostgresStorage:
                 INSERT INTO raw_provider_events (
                   raw_event_id, provider, adapter_instance, connection_id, session_id,
                   instrument, received_time, provider_time, payload_content_type,
-                  payload, content_hash, redaction_status, metadata, created_time
+                  payload, content_hash, redaction_status, metadata, created_time,
+                  browser_observed_at, collector_received_at, database_created_at,
+                  document_session_id, observation_sequence,
+                  browser_to_collector_delay_ms
                 ) VALUES (
                   %(id)s, %(provider)s, %(adapter)s, %(connection)s, %(session)s,
                   %(instrument)s, %(received)s, %(provider_time)s, %(content_type)s,
-                  %(payload)s, %(hash)s, %(redaction)s, %(metadata)s::jsonb, now()
+                  %(payload)s, %(hash)s, %(redaction)s, %(metadata)s::jsonb, now(),
+                  %(browser_observed_at)s, %(collector_received_at)s, now(),
+                  %(document_session_id)s, %(observation_sequence)s,
+                  %(browser_to_collector_delay_ms)s
                 ) ON CONFLICT (raw_event_id, received_time) DO NOTHING
                 """,
                 {
@@ -65,6 +71,11 @@ class PostgresStorage:
                     "hash": event.content_hash,
                     "redaction": event.redaction_status,
                     "metadata": json.dumps(event.channel_metadata),
+                    "browser_observed_at": event.browser_observed_at,
+                    "collector_received_at": event.collector_received_at,
+                    "document_session_id": event.document_session_id,
+                    "observation_sequence": event.observation_sequence,
+                    "browser_to_collector_delay_ms": event.browser_to_collector_delay_ms,
                 },
             )
             await connection.commit()
@@ -79,23 +90,51 @@ class PostgresStorage:
             ).fetchone()
             return row is not None
 
+    async def last_observation_sequence(
+        self, document_session_id: str, instrument: str
+    ) -> int | None:
+        async with self.pool.connection() as connection:
+            row = await (
+                await connection.execute(
+                    """
+                    SELECT observation_sequence
+                    FROM price_ticks
+                    WHERE document_session_id = %s
+                      AND instrument = %s
+                      AND observation_sequence IS NOT NULL
+                    ORDER BY observation_sequence DESC
+                    LIMIT 1
+                    """,
+                    (document_session_id, instrument),
+                )
+            ).fetchone()
+            return int(row[0]) if row is not None else None
+
     async def store_tick(self, event: PriceTick) -> None:
         async with self.pool.connection() as connection:
             await connection.execute(
                 """
                 INSERT INTO price_ticks (
                   event_id, schema_version, provider, adapter_instance, instrument,
-                  source, observation_level, is_provider_tick,
+                  base_currency, quote_currency, source, observation_level, is_provider_tick,
                   bid, ask, mid, spread, spread_pips, pip_size, provider_event_time,
                   received_time, normalized_time, sequence, snapshot, changed_fields,
                   quality_status, quality_flags, raw_event_id, trace_id
+                  , browser_observed_at, collector_received_at, database_created_at
+                  , document_session_id, observation_sequence
+                  , browser_to_collector_delay_ms, collector_processing_delay_ms
+                  , total_local_pipeline_delay_ms
                 ) VALUES (
                   %(event_id)s, %(schema_version)s, %(provider)s, %(adapter)s, %(instrument)s,
+                  %(base_currency)s, %(quote_currency)s,
                   %(source)s, %(observation_level)s, %(is_provider_tick)s,
                   %(bid)s, %(ask)s, %(mid)s, %(spread)s, %(spread_pips)s, %(pip_size)s,
                   %(provider_time)s, %(received)s, %(normalized)s, %(sequence)s, %(snapshot)s,
                   %(changed)s, %(quality_status)s, %(quality_flags)s, %(raw_event_id)s,
-                  %(trace_id)s
+                  %(trace_id)s, %(browser_observed_at)s, %(collector_received_at)s, now(),
+                  %(document_session_id)s, %(observation_sequence)s,
+                  %(browser_to_collector_delay_ms)s, %(collector_processing_delay_ms)s,
+                  %(total_local_pipeline_delay_ms)s
                 ) ON CONFLICT (event_id, received_time) DO NOTHING
                 """,
                 {
@@ -104,6 +143,8 @@ class PostgresStorage:
                     "provider": event.provider,
                     "adapter": event.adapter_instance_id,
                     "instrument": event.instrument,
+                    "base_currency": event.base_currency,
+                    "quote_currency": event.quote_currency,
                     "source": event.source,
                     "observation_level": event.observation_level,
                     "is_provider_tick": event.is_provider_tick,
@@ -123,6 +164,13 @@ class PostgresStorage:
                     "quality_flags": event.quality_flags,
                     "raw_event_id": event.raw_event_id,
                     "trace_id": event.trace_id,
+                    "browser_observed_at": event.browser_observed_at,
+                    "collector_received_at": event.collector_received_at,
+                    "document_session_id": event.document_session_id,
+                    "observation_sequence": event.observation_sequence,
+                    "browser_to_collector_delay_ms": event.browser_to_collector_delay_ms,
+                    "collector_processing_delay_ms": event.collector_processing_delay_ms,
+                    "total_local_pipeline_delay_ms": event.total_local_pipeline_delay_ms,
                 },
             )
             await connection.commit()

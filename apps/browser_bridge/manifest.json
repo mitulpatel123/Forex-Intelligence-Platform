@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Forex Intelligence — IC Markets Discovery Bridge",
-  "version": "0.1.0",
-  "description": "Reliably forwards the visible EUR/USD display quote; never interacts with trades.",
+  "version": "0.2.0",
+  "description": "Reliably forwards four visible FX display quotes; never interacts with trades or account controls.",
   "permissions": ["alarms", "storage"],
   "host_permissions": [
     "https://webtrader-sc.ic.com/*",
@@ -51,7 +51,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "IC Markets EURUSD display bridge"
+    "default_title": "IC Markets four-pair display bridge"
   },
   "options_page": "options.html"
 }

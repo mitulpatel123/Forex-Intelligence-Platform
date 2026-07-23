@@ -1,32 +1,34 @@
 # Data flow
 
-1. Observe a changed, visible EURUSD bid/ask pair in the authenticated terminal.
-2. Assign an observation UUID and persist it in the extension's 1,000-item outbox.
-3. POST with a five-second timeout and retry the same UUID after temporary failures.
-4. Remove the observation only after authenticated collector acknowledgement.
-5. Redact sensitive keys and token-shaped text server-side.
-6. Hash and persist/publish the idempotent `RAW_PROVIDER_EVENT`.
-7. Validate instrument, timestamp availability, numeric fields, semantics, ordering,
-   and the dedup key.
-8. Reconstruct a partial only from fresh state in the same connection/session.
-9. Emit `PRICE_TICK` plus the timestamp-availability quality warning.
-10. Update Redis Streams and `latest:quote:IC_MARKETS:EURUSD`.
-11. Insert idempotently into TimescaleDB and update metrics beside the data path.
+1. Generate Python and TypeScript pair definitions from the canonical registry.
+2. Locate each visible supported Market Watch row by exact Symbol/Bid/Ask headers.
+3. Validate pair-specific decimal precision and broad price bounds.
+4. Emit a changed pair. If a row is lost/replaced/reacquired, emit the first
+   restored snapshot even when its displayed price is unchanged.
+5. Assign a per-document, per-pair observation sequence and stable UUID, then
+   persist the event in its pair's bounded outbox group.
+6. Service groups round-robin while preserving FIFO within each pair.
+7. POST the full display snapshot to the token-authenticated loopback endpoint.
+8. Enforce visible-DOM provenance, generate `collector_received_at`, and use one
+   active browser document per pair. Standby observations are acknowledged and
+   suppressed until lease failover.
+9. Store/publish `RAW_PROVIDER_EVENT` before normalization.
+10. Validate registry, bounded TTL/LRU dedup, pip, jump, spread, strict observation
+    sequence, and local-clock/delivery-delay policy.
+11. Emit `PRICE_TICK` v0.2 and relevant quality events.
+12. Write TimescaleDB, global Redis Streams, the pair's latest key, feed-health key,
+    and per-pair metrics.
+13. Acknowledge the browser event; only then remove it from the persistent outbox.
 
-Redis delivery is at-least-once; consumers use groups, processing-attempt fields,
-explicit acknowledgements, retry handling, and a dead-letter stream. Database event
-keys make repeated writes safe.
-
-The browser outbox satisfies:
+Browser reconciliation is evaluated per pair:
 
 ```text
-produced = acknowledged + pending + dropped + rejected
+produced = acknowledged + pending + dropped
+rejected is a classified subset of dropped
 ```
 
-Acknowledged observation UUIDs are idempotent at the collector, including an
-acknowledgement lost after the database commit.
-
-HTTP ingestion uses a 10,000-item bounded async queue. Producers receive backpressure;
-if insertion cannot complete within 250 ms the request returns 503 and increments
-`collector_dropped_events_total`. Shutdown stops readiness, drains accepted work,
-then cancels workers and closes storage connections.
+The collector acknowledges a repeated event ID as a duplicate without adding a
+second durable raw or normalized row. Extension service-worker and collector
+restarts therefore preserve at-least-once delivery without duplicate history.
+`received_at` is retained for compatibility and means `browser_observed_at` for
+display quotes; it is never described as provider time.

@@ -1,18 +1,21 @@
 # Security
 
-All host ports and collector services bind to loopback. The discovery endpoint
-requires a random 256-bit-equivalent URL-safe token stored in `.local/bridge-token`
-with mode 0600 and in extension-local storage; it is never committed. Do not paste
-provider passwords, MFA codes, cookies, session tokens, or account data anywhere.
+Collector ingestion binds to loopback and requires a random local bridge token
+stored in `.local/bridge-token` with mode 0600 and in extension-local storage.
+Never provide provider passwords, MFA codes, cookies, session tokens, or account
+data to this project.
 
-The extension uses Manifest V3, local bundled code, `storage` plus `alarms` only, no
-`<all_urls>`, a seven-origin evidence-based terminal allowlist, a 256 KiB limit,
-strict channel/origin validation, and recursive/token-pattern redaction. Normal
-collection targets exact visible Symbol/Bid/Ask columns. Binary discovery is OFF by
-default and must be enabled explicitly. Discovery payloads are redacted again by the
-collector before raw storage; the collector never trusts a client-side
-`SANITIZED` claim. The extension contains no trade-control code. Authorization
-headers and cookies are never inspected.
+The Manifest V3 extension uses bundled local code, only `storage` and `alarms`,
+no `<all_urls>`, an evidence-based terminal allowlist, strict origin/channel/schema
+checks, and a 256 KiB payload bound. Normal capture reads only visible Symbol, Bid,
+and Ask cells for the four supported pairs. It has no trade or account-control
+permissions or code.
+
+WebSocket discovery is OFF by default and is unrelated to normal four-pair
+collection. When explicitly enabled for supervised diagnostics, candidates are
+bounded, allowlisted, and redacted in the extension and again by the collector.
+The collector never trusts a client `SANITIZED` claim. No last discovery frame is
+retained in extension storage.
 
 `.env`, `.local`, data captures, logs, profiles, keys, and secrets are ignored.
-The local Grafana default password must be changed outside local development.
+Change the local Grafana default password outside isolated development.

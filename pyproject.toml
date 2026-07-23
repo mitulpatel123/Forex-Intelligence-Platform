@@ -1,7 +1,7 @@
 [project]
 name = "forex-intelligence-platform"
-version = "0.1.0"
-description = "Local-first IC Markets EUR/USD discovery and validated event pipeline"
+version = "0.2.0"
+description = "Local-first IC Markets four-pair display-quote pipeline"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "fastapi==0.116.1",
@@ -50,6 +50,7 @@ packages = [
 
 [tool.pytest.ini_options]
 pythonpath = [
+  ".",
   "apps/collector/src",
   "apps/health_api/src",
   "packages/contracts/src",
