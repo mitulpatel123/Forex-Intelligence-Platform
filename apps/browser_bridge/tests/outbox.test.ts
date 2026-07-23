@@ -137,6 +137,36 @@ describe("persistent fair browser outbox", () => {
     expect(snapshot.pending).toBe(1);
   });
 
+  it("keeps later same-pair events behind a retrying head", async () => {
+    const storage = new MemoryStorage();
+    let now = 1_000;
+    const delivered: string[] = [];
+    let eurHeadAttempts = 0;
+    const queue = outbox(
+      storage,
+      async (candidate) => {
+        delivered.push(candidate.eventId);
+        if (candidate.eventId === "eur-1" && eurHeadAttempts++ === 0) {
+          return { acknowledged: false, retryable: true };
+        }
+        return { acknowledged: true, retryable: false };
+      },
+      { now: () => now },
+    );
+    await queue.enqueue(event("eur-1"));
+    await queue.enqueue(event("eur-2"));
+    await queue.enqueue(event("gbp-1", "GBPUSD"));
+
+    await queue.drain();
+    expect(delivered).toEqual(["eur-1", "gbp-1"]);
+    expect((await queue.snapshot()).pendingByInstrument.EURUSD).toBe(2);
+
+    now = 1_500;
+    await queue.drain();
+    expect(delivered).toEqual(["eur-1", "gbp-1", "eur-1", "eur-2"]);
+    expect((await queue.snapshot()).pending).toBe(0);
+  });
+
   it("bounds capacity and attributes the drop to its pair", async () => {
     const queue = outbox(new MemoryStorage(), vi.fn(), { maxSize: 1 });
     expect(await queue.enqueue(event("event-1"))).toBe(true);

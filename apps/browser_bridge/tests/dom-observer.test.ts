@@ -199,6 +199,36 @@ describe("four-pair targeted market-watch observer", () => {
     observer.stop();
   });
 
+  it("reacquires a row when initially empty prices hydrate as text", async () => {
+    document.body.innerHTML = table([
+      ["EURUSD", "loading", "loading"],
+      FOUR_ROWS[1]!,
+      FOUR_ROWS[2]!,
+      FOUR_ROWS[3]!,
+    ]);
+    const quotes: VisibleQuote[] = [];
+    const observer = new MultiQuoteObserver((quote) => quotes.push(quote));
+    observer.start();
+    expect(observer.snapshot().EURUSD.status).toBe("MISSING");
+
+    const eurusd = document.querySelector("[data-symbol='EURUSD']");
+    const bidText = eurusd?.children[1]?.firstChild;
+    const askText = eurusd?.children[2]?.firstChild;
+    expect(bidText).toBeInstanceOf(Text);
+    expect(askText).toBeInstanceOf(Text);
+    (bidText as Text).data = "1.13743";
+    (askText as Text).data = "1.13744";
+    await reacquire();
+
+    expect(observer.snapshot().EURUSD.status).toBe("READY");
+    expect(quotes.at(-1)).toEqual({
+      instrument: "EURUSD",
+      bid: "1.13743",
+      ask: "1.13744",
+    });
+    observer.stop();
+  });
+
   it("emits only the changed pair", async () => {
     document.body.innerHTML = table(FOUR_ROWS);
     const quotes: VisibleQuote[] = [];

@@ -237,18 +237,24 @@ export class PersistentOutbox {
     for (let offset = 0; offset < GROUPS.length; offset += 1) {
       const index = (this.cursor + offset) % GROUPS.length;
       const group = GROUPS[index];
-      const event = events.find(
-        (candidate) =>
-          eventGroup(candidate) === group &&
-          candidate.nextAttemptAt <= this.now() &&
-          !attempted.has(candidate.eventId),
-      );
-      if (event) {
+      const head = events.find((candidate) => eventGroup(candidate) === group);
+      if (
+        head &&
+        head.nextAttemptAt <= this.now() &&
+        !attempted.has(head.eventId)
+      ) {
         this.cursor = (index + 1) % GROUPS.length;
-        return event;
+        return head;
       }
     }
     return null;
+  }
+
+  private groupHeads(events: OutboxEvent[]): OutboxEvent[] {
+    return GROUPS.flatMap((group) => {
+      const head = events.find((candidate) => eventGroup(candidate) === group);
+      return head ? [head] : [];
+    });
   }
 
   private async drainLoop(): Promise<void> {
@@ -258,7 +264,9 @@ export class PersistentOutbox {
       if (current.events.length === 0) return;
       const event = this.selectNext(current.events, attempted);
       if (!event) {
-        const nextAttempt = Math.min(...current.events.map((candidate) => candidate.nextAttemptAt));
+        const nextAttempt = Math.min(
+          ...this.groupHeads(current.events).map((candidate) => candidate.nextAttemptAt),
+        );
         await this.options.schedule(Math.max(this.now(), nextAttempt));
         return;
       }

@@ -294,6 +294,7 @@ export class MultiQuoteObserver {
       });
       this.acquisitionObserver.observe(observationRoot, {
         childList: true,
+        characterData: true,
         subtree: true,
       });
     }

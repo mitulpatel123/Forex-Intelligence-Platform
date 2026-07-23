@@ -23,7 +23,9 @@ The browser observes `EURUSD`, `GBPUSD`, `USDJPY`, and `AUDUSD` independently.
 Discovery scans at most 32 tables and 512 rows, maps exact Symbol/Bid/Ask headers,
 ignores hidden responsive duplicates, accepts identical duplicates, and marks only
 a pair with conflicting visible duplicates `AMBIGUOUS`. Target replacement uses a
-bounded 100 ms reacquisition schedule.
+bounded 100 ms reacquisition schedule. The acquisition watcher includes text changes
+so rows rendered before their prices hydrate are acquired without requiring a layout
+replacement.
 
 Every browser document has account-free browser-run, tab, frame, and document
 identity. A two-second heartbeat reports bridge state plus target, observation, and
@@ -31,9 +33,9 @@ outbox state per pair. Bridge connectivity and quote freshness are separate heal
 dimensions.
 
 The persistent outbox reserves capacity per pair, keeps FIFO order within a pair,
-and services pair groups round-robin. The collector repeats that structure with
-bounded per-pair asyncio queues. A failing or high-rate pair cannot prevent another
-pair from being attempted.
+never bypasses a retrying pair head, and services pair groups round-robin. The
+collector repeats that structure with bounded per-pair asyncio queues. A failing or
+high-rate pair cannot prevent another pair from being attempted.
 
 Raw input is stored before normalized output. Adapter state is keyed by connection,
 session, and instrument and invalidated on disconnect. Redis current state uses one

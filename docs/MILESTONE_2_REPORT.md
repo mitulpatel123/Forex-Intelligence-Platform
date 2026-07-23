@@ -25,10 +25,12 @@ justified query index. It does not rewrite history.
 
 The observer maps exact headers, discovers one target per pair within bounded work,
 isolates ambiguity/missing/malformed rows, and reacquires replacements on a 100 ms
-bounded schedule. It emits only the pair that changed.
+bounded schedule. Its acquisition watcher also reacts when initially empty price
+cells hydrate as text. It emits only the pair that changed.
 
 The persistent outbox reserves per-group capacity, persists stable IDs, uses capped
-exponential retry, keeps pair FIFO, and selects groups round-robin. The collector
+exponential retry, keeps strict pair FIFO by never bypassing a retrying group head,
+and selects groups round-robin. The collector
 uses bounded per-pair FIFO queues with round-robin consumption and a 250 ms
 backpressure limit.
 
@@ -51,7 +53,7 @@ make secret-scan
 Current local results:
 
 - Python unit/contract/adapter/queue: 51 passed
-- Extension/manifest/DOM/outbox: 39 passed
+- Extension/manifest/DOM/outbox: 41 passed
 - Real Redis/TimescaleDB integration/replay: 3 passed
 - Smoke: passed
 - Mixed load: 5,000 processed, 0 dropped, all four pairs processed, no starvation
