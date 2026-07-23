@@ -14,6 +14,11 @@ class EventModel(Protocol):
     def model_dump_json(self) -> str: ...
 
 
+class QuoteEventModel(EventModel, Protocol):
+    @property
+    def instrument(self) -> str: ...
+
+
 class RedisEventBus:
     def __init__(self, url: str) -> None:
         self.redis = Redis.from_url(url, decode_responses=True)
@@ -32,8 +37,17 @@ class RedisEventBus:
             )
         )
 
-    async def set_latest_quote(self, event: EventModel) -> None:
-        await self.redis.set("latest:quote:IC_MARKETS:EURUSD", event.model_dump_json())
+    async def set_latest_quote(self, event: QuoteEventModel) -> None:
+        await self.redis.set(
+            f"latest:quote:IC_MARKETS:{event.instrument}",
+            event.model_dump_json(),
+        )
+
+    async def set_feed_health(self, instrument: str, value: dict[str, Any]) -> None:
+        await self.redis.set(
+            f"health:feed:IC_MARKETS:{instrument}",
+            json.dumps(value, sort_keys=True, default=str),
+        )
 
     async def ensure_group(self, stream: str, group: str) -> None:
         try:
@@ -70,7 +84,11 @@ class RedisEventBus:
             "quality.events",
             "adapter.status",
             "raw.provider.ic_markets.dead_letter",
-            "latest:quote:IC_MARKETS:EURUSD",
+            *[
+                f"{prefix}:IC_MARKETS:{instrument}"
+                for prefix in ("latest:quote", "health:feed")
+                for instrument in ("EURUSD", "GBPUSD", "USDJPY", "AUDUSD")
+            ],
         ]
         await self.redis.delete(*keys)
 

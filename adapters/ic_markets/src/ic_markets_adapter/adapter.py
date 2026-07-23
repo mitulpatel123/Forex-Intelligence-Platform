@@ -6,7 +6,14 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from adapter_sdk import Adapter, AdapterOutput, ProviderEnvelope
-from forex_contracts import DataQualityEvent, PriceTick, QualityStatus, RawProviderEvent
+from forex_contracts import (
+    DataQualityEvent,
+    PriceTick,
+    QualityStatus,
+    RawProviderEvent,
+    instrument_spec,
+    is_supported_instrument,
+)
 from forex_contracts.models import canonical_hash, utc_now
 
 from ic_markets_adapter.redaction import redact
@@ -35,8 +42,8 @@ class IcMarketsAdapter(Adapter):
         instance_id: str = "icm-local-01",
         partial_state_max_age: timedelta = timedelta(seconds=2),
         max_future_skew: timedelta = timedelta(seconds=2),
-        extreme_spread_pips: Decimal = Decimal("5"),
-        extreme_jump_pips: Decimal = Decimal("20"),
+        extreme_spread_pips: Decimal | None = None,
+        extreme_jump_pips: Decimal | None = None,
     ) -> None:
         self.instance_id = instance_id
         self.partial_state_max_age = partial_state_max_age
@@ -137,7 +144,7 @@ class IcMarketsAdapter(Adapter):
             )
 
         instrument = sanitized.get("instrument")
-        if instrument != "EURUSD":
+        if not is_supported_instrument(instrument):
             return AdapterOutput(
                 raw_event=raw,
                 quality_events=[
@@ -145,7 +152,7 @@ class IcMarketsAdapter(Adapter):
                         raw,
                         "STRUCT_INSTRUMENT",
                         QualityStatus.BAD,
-                        "instrument == EURUSD",
+                        "instrument exists in the canonical registry",
                         observed=str(instrument),
                     )
                 ],
@@ -187,7 +194,18 @@ class IcMarketsAdapter(Adapter):
         sequence = sequence_value if isinstance(sequence_value, int) else None
         bid = self._parse_decimal(sanitized.get("bid"))
         ask = self._parse_decimal(sanitized.get("ask"))
-        key = (envelope.connection_id, envelope.session_id, "EURUSD")
+        spec = instrument_spec(instrument)
+        pip_size = spec["pip_size"]
+        minimum = spec["broad_min_price"]
+        maximum = spec["broad_max_price"]
+        spread_limit = self.extreme_spread_pips or spec["extreme_spread_pips"]
+        jump_limit = self.extreme_jump_pips or spec["extreme_jump_pips"]
+        assert isinstance(pip_size, Decimal)
+        assert isinstance(minimum, Decimal)
+        assert isinstance(maximum, Decimal)
+        assert isinstance(spread_limit, Decimal)
+        assert isinstance(jump_limit, Decimal)
+        key = (envelope.connection_id, envelope.session_id, instrument)
         previous = self._state.get(key)
         changed_fields: list[str] = []
 
@@ -274,6 +292,19 @@ class IcMarketsAdapter(Adapter):
                     )
                 ],
             )
+        if bid < minimum or ask > maximum:
+            return AdapterOutput(
+                raw_event=raw,
+                quality_events=[
+                    self._quality(
+                        raw,
+                        "NUM_PRICE_BROAD_RANGE",
+                        QualityStatus.BAD,
+                        f"{minimum} <= bid <= ask <= {maximum}",
+                        observed=f"{bid}/{ask}",
+                    )
+                ],
+            )
         if ask < bid:
             return AdapterOutput(
                 raw_event=raw,
@@ -288,7 +319,7 @@ class IcMarketsAdapter(Adapter):
                 "provider": "IC_MARKETS",
                 "connection_id": envelope.connection_id,
                 "session_id": envelope.session_id,
-                "instrument": "EURUSD",
+                "instrument": instrument,
                 "event_order_time": event_order_time.isoformat(),
                 "timestamp_basis": "provider"
                 if provider_time is not None
@@ -366,10 +397,8 @@ class IcMarketsAdapter(Adapter):
                         )
                     ],
                 )
-            jump_pips = abs(((bid + ask) / 2) - ((previous.bid + previous.ask) / 2)) / Decimal(
-                "0.0001"
-            )
-            if jump_pips > self.extreme_jump_pips:
+            jump_pips = abs(((bid + ask) / 2) - ((previous.bid + previous.ask) / 2)) / pip_size
+            if jump_pips > jump_limit:
                 flags.append("EXTREME_SINGLE_TICK_JUMP")
                 status = QualityStatus.WARNING
                 qualities.append(
@@ -377,14 +406,14 @@ class IcMarketsAdapter(Adapter):
                         raw,
                         "PLAUS_EXTREME_JUMP",
                         QualityStatus.WARNING,
-                        f"jump <= {self.extreme_jump_pips} pips",
+                        f"jump <= {jump_limit} pips",
                         action="tick_published_with_warning",
                         observed=str(jump_pips),
                         severity="WARNING",
                     )
                 )
-        spread_pips = (ask - bid) / Decimal("0.0001")
-        if spread_pips > self.extreme_spread_pips:
+        spread_pips = (ask - bid) / pip_size
+        if spread_pips > spread_limit:
             flags.append("EXTREME_SPREAD")
             status = QualityStatus.WARNING
             qualities.append(
@@ -392,7 +421,7 @@ class IcMarketsAdapter(Adapter):
                     raw,
                     "PLAUS_EXTREME_SPREAD",
                     QualityStatus.WARNING,
-                    f"spread <= {self.extreme_spread_pips} pips",
+                    f"spread <= {spread_limit} pips",
                     action="tick_published_with_warning",
                     observed=str(spread_pips),
                     severity="WARNING",
@@ -403,6 +432,7 @@ class IcMarketsAdapter(Adapter):
         is_visible_dom = sanitized.get("observation_source") == "visible_dom"
         tick = PriceTick.from_quote(
             adapter_instance_id=self.instance_id,
+            instrument=instrument,
             source="VISIBLE_DOM" if is_visible_dom else "WEB_TERMINAL",
             observation_level="DISPLAY_QUOTE" if is_visible_dom else "PROVIDER_TICK",
             is_provider_tick=not is_visible_dom,

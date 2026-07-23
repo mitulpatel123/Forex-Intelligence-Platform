@@ -14,18 +14,21 @@ BASE = datetime(2026, 7, 23, 14, 30, 1, tzinfo=UTC)
 
 def envelope(
     *,
+    instrument: str = "EURUSD",
     semantics: str = "snapshot",
     bid: object = "1.08542",
     ask: object = "1.08544",
     sequence: int = 1,
-    provider_time: datetime = BASE,
+    provider_time: datetime | None = BASE,
     received_at: datetime = BASE + timedelta(milliseconds=4),
     connection: str = "c1",
     session: str = "s1",
 ) -> ProviderEnvelope:
     payload = {
-        "instrument": "EURUSD",
-        "provider_event_time": provider_time.isoformat().replace("+00:00", "Z"),
+        "instrument": instrument,
+        "provider_event_time": (
+            provider_time.isoformat().replace("+00:00", "Z") if provider_time is not None else None
+        ),
         "sequence": sequence,
     }
     if bid is not None:
@@ -53,6 +56,116 @@ def test_complete_snapshot_and_decimal_math() -> None:
     assert output.tick.spread_pips == Decimal("0.2")
     assert output.tick.pip_size == Decimal("0.0001")
     assert output.tick.changed_fields == ["bid", "ask"]
+
+
+@pytest.mark.parametrize(
+    ("instrument", "bid", "ask", "base", "quote", "pip", "spread_pips"),
+    [
+        ("EURUSD", "1.13743", "1.13744", "EUR", "USD", "0.0001", "0.1"),
+        ("GBPUSD", "1.33155", "1.33157", "GBP", "USD", "0.0001", "0.2"),
+        ("USDJPY", "163.832", "163.833", "USD", "JPY", "0.01", "0.1"),
+        ("AUDUSD", "0.69689", "0.69690", "AUD", "USD", "0.0001", "0.1"),
+    ],
+)
+def test_all_supported_pairs_use_registry_math(
+    instrument: str,
+    bid: str,
+    ask: str,
+    base: str,
+    quote: str,
+    pip: str,
+    spread_pips: str,
+) -> None:
+    output = IcMarketsAdapter().process(envelope(instrument=instrument, bid=bid, ask=ask))
+    assert output.tick is not None
+    assert output.tick.instrument == instrument
+    assert output.tick.base_currency == base
+    assert output.tick.quote_currency == quote
+    assert output.tick.pip_size == Decimal(pip)
+    assert output.tick.spread_pips == Decimal(spread_pips)
+    assert output.tick.schema_version == "0.2"
+
+
+def test_state_and_dedup_are_independent_per_pair() -> None:
+    adapter = IcMarketsAdapter()
+    eur = adapter.process(envelope(instrument="EURUSD", bid="1.1", ask="1.1001"))
+    aud = adapter.process(envelope(instrument="AUDUSD", bid="0.7", ask="0.7001"))
+    assert eur.tick is not None
+    assert aud.tick is not None
+    duplicate = adapter.process(envelope(instrument="EURUSD", bid="1.1", ask="1.1001"))
+    assert duplicate.tick is None
+    assert rule(duplicate) == "DUP_STRONG_KEY"
+
+    aud_partial = adapter.process(
+        envelope(
+            instrument="AUDUSD",
+            semantics="partial",
+            bid="0.70005",
+            ask=None,
+            sequence=2,
+            provider_time=BASE + timedelta(milliseconds=1),
+            received_at=BASE + timedelta(milliseconds=5),
+        )
+    )
+    assert aud_partial.tick is not None
+    assert aud_partial.tick.ask == Decimal("0.7001")
+
+
+def test_disconnect_invalidates_every_pair_only_in_that_session() -> None:
+    adapter = IcMarketsAdapter()
+    adapter.process(envelope(instrument="EURUSD"))
+    adapter.process(envelope(instrument="AUDUSD", bid="0.7", ask="0.7001"))
+    adapter.process(
+        envelope(
+            instrument="GBPUSD",
+            bid="1.3",
+            ask="1.3001",
+            connection="other",
+            session="other",
+        )
+    )
+    adapter.on_disconnect("c1", "s1")
+    invalidated = adapter.process(
+        envelope(
+            instrument="AUDUSD",
+            semantics="partial",
+            ask=None,
+            bid="0.70005",
+            sequence=2,
+            provider_time=BASE + timedelta(milliseconds=1),
+            received_at=BASE + timedelta(milliseconds=5),
+        )
+    )
+    retained = adapter.process(
+        envelope(
+            instrument="GBPUSD",
+            semantics="partial",
+            ask=None,
+            bid="1.30005",
+            sequence=2,
+            provider_time=BASE + timedelta(milliseconds=1),
+            received_at=BASE + timedelta(milliseconds=5),
+            connection="other",
+            session="other",
+        )
+    )
+    assert rule(invalidated) == "PARTIAL_NO_SAFE_STATE"
+    assert retained.tick is not None
+
+
+@pytest.mark.parametrize(
+    ("instrument", "bid", "ask"),
+    [
+        ("EURUSD", "1.1", "1.101"),
+        ("GBPUSD", "1.3", "1.301"),
+        ("USDJPY", "160", "160.1"),
+        ("AUDUSD", "0.7", "0.701"),
+    ],
+)
+def test_pair_specific_extreme_spread_warning(instrument: str, bid: str, ask: str) -> None:
+    output = IcMarketsAdapter().process(envelope(instrument=instrument, bid=bid, ask=ask))
+    assert output.tick is not None
+    assert "EXTREME_SPREAD" in output.tick.quality_flags
 
 
 @pytest.mark.parametrize(

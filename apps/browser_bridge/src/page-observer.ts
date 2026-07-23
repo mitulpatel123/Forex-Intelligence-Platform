@@ -1,9 +1,9 @@
-import { TargetedQuoteObserver } from "./dom-observer";
+import { MultiQuoteObserver } from "./dom-observer";
 import {
   CHANNEL,
   CONFIG_CHANNEL,
   MAX_PAYLOAD_BYTES,
-  isEurUsdCandidate,
+  isSupportedPairCandidate,
   redactText,
 } from "./schema";
 
@@ -45,7 +45,7 @@ async function inspectDiscoveryFrame(data: unknown): Promise<void> {
     return;
   }
 
-  if (!isEurUsdCandidate(payload)) return;
+  if (!isSupportedPairCandidate(payload)) return;
   const sanitized = redactText(payload);
   if (new TextEncoder().encode(sanitized).byteLength > MAX_PAYLOAD_BYTES) return;
   window.postMessage(
@@ -71,17 +71,30 @@ const ObserverWebSocket = new Proxy(NativeWebSocket, {
 
 window.WebSocket = ObserverWebSocket;
 
-const quoteObserver = new TargetedQuoteObserver((quote) => {
-  window.postMessage(
-    {
-      channel: CHANNEL,
-      frameType: "dom-visible-quote",
-      receivedAt: new Date().toISOString(),
-      payload: JSON.stringify({ instrument: "EURUSD", ...quote }),
-    },
-    window.location.origin,
-  );
-});
+const quoteObserver = new MultiQuoteObserver(
+  (quote) => {
+    window.postMessage(
+      {
+        channel: CHANNEL,
+        frameType: "dom-visible-quote",
+        receivedAt: new Date().toISOString(),
+        payload: JSON.stringify(quote),
+      },
+      window.location.origin,
+    );
+  },
+  (pairs) => {
+    window.postMessage(
+      {
+        channel: CHANNEL,
+        frameType: "observer-pair-status",
+        receivedAt: new Date().toISOString(),
+        pairs,
+      },
+      window.location.origin,
+    );
+  },
+);
 
 if (document.readyState === "loading") {
   window.addEventListener("DOMContentLoaded", () => quoteObserver.start(), { once: true });

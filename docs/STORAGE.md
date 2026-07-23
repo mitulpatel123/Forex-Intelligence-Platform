@@ -1,24 +1,26 @@
 # Storage
 
-Migration `001_initial.sql` creates TimescaleDB hypertables:
-`raw_provider_events`, `price_ticks`, `data_quality_events`, and
-`adapter_heartbeats`. Time, provider/instrument, event, hash, and quality-rule
-indexes support verification and analysis. No retention or compression policy is
-enabled; test history is preserved.
+`001_initial.sql` creates TimescaleDB hypertables for raw events, price ticks,
+quality events, and adapter heartbeats. `002_display_quote_provenance.sql` adds
+durable source qualification. Additive migration
+`003_price_tick_v02_currencies.sql` adds nullable `base_currency` and
+`quote_currency` plus an instrument/normalized-time index. Historical v0.1 rows
+are not rewritten by Milestone 2.
 
-Migration `002_display_quote_provenance.sql` adds durable `source`,
-`observation_level`, and `is_provider_tick` columns so a rendered display update
-cannot be mistaken for a provider-native tick.
+New v0.2 rows carry the registry-derived base/quote currency and pair pip size.
+The four current Redis keys are:
 
-Useful checks:
-
-```sql
-SELECT instrument, received_time, bid, ask, quality_status
-FROM price_ticks ORDER BY received_time DESC LIMIT 10;
-SELECT rule_id, classification, count(*)
-FROM data_quality_events GROUP BY 1,2 ORDER BY 3 DESC;
-SELECT count(*) FROM raw_provider_events;
+```text
+latest:quote:IC_MARKETS:EURUSD
+latest:quote:IC_MARKETS:GBPUSD
+latest:quote:IC_MARKETS:USDJPY
+latest:quote:IC_MARKETS:AUDUSD
 ```
 
-Raw payloads may contain sensitive provider content despite redaction. Raw capture
-is local, ignored by Git, and should be disabled or purged according to local policy.
+Per-pair health uses `health:feed:IC_MARKETS:<instrument>`. Global Redis Streams
+retain `instrument` inside each serialized event.
+
+Use [scripts/verify_milestone_2.sql](../scripts/verify_milestone_2.sql) for latest
+rows, counts, warnings, reconciliation, and stale checks. No retention or
+compression policy is enabled. Raw discovery content is local, redacted, ignored
+by Git, and should be governed by local retention policy.

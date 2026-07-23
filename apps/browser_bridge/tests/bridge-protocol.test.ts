@@ -16,6 +16,10 @@ describe("browser bridge protocol", () => {
 
   it("creates account-free per-run, tab, frame, and document identities", () => {
     expect(browserIdentity("run-id", 12, 3, "document-id")).toEqual({
+      browserRunId: "run-id",
+      tabId: 12,
+      frameId: 3,
+      documentSessionId: "document-id",
       connectionId: "browser-run-id-tab-12-frame-3",
       sessionId: "document-document-id",
     });
@@ -33,12 +37,24 @@ describe("browser bridge protocol", () => {
     expect(quote).not.toBeNull();
     const request = providerRequest(
       "event-id",
-      { connectionId: "connection", sessionId: "session" },
+      {
+        browserRunId: "run",
+        tabId: 1,
+        frameId: 0,
+        documentSessionId: "document",
+        connectionId: "connection",
+        sessionId: "session",
+      },
       frame,
       quote!,
     );
     expect(request).toMatchObject({
       event_id: "event-id",
+      instrument: "EURUSD",
+      browser_run_id: "run",
+      tab_id: 1,
+      frame_id: 0,
+      document_session_id: "document",
       payload: {
         observation_source: "visible_dom",
         observation_level: "DISPLAY_QUOTE",

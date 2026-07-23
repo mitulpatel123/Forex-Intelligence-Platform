@@ -5,11 +5,12 @@ import json
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from adapter_sdk import ProviderEnvelope
 from event_bus import RedisEventBus
+from forex_contracts import SUPPORTED_INSTRUMENTS, is_supported_instrument
 from ic_markets_adapter import IcMarketsAdapter
 from storage import PostgresStorage
 
@@ -19,7 +20,7 @@ from forex_collector.settings import Settings
 app = typer.Typer(help="Replay sanitized discovery-bridge fixtures deterministically.")
 
 
-async def replay_file(path: Path, speed: str, publish: bool, reset: bool) -> dict[str, int | float]:
+async def replay_file(path: Path, speed: str, publish: bool, reset: bool) -> dict[str, Any]:
     settings = Settings()
     bus = RedisEventBus(settings.redis_url) if publish else None
     storage = PostgresStorage(settings.database_url) if publish else None
@@ -36,12 +37,23 @@ async def replay_file(path: Path, speed: str, publish: bool, reset: bool) -> dic
         for line in path.read_text().splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     ]
-    counters: dict[str, int | float] = {
+    counters: dict[str, Any] = {
         "total_raw_events": 0,
         "valid_ticks": 0,
         "invalid_events": 0,
         "duplicates": 0,
         "out_of_order_events": 0,
+    }
+    pairs: dict[str, dict[str, int | float]] = {
+        instrument: {
+            "raw": 0,
+            "normalized": 0,
+            "warnings": 0,
+            "invalid": 0,
+            "duplicates": 0,
+            "out_of_order": 0,
+        }
+        for instrument in SUPPORTED_INSTRUMENTS
     }
     previous_received: datetime | None = None
     started = perf_counter()
@@ -57,6 +69,7 @@ async def replay_file(path: Path, speed: str, publish: bool, reset: bool) -> dic
                 typer.echo("Press Enter for next event.")
                 await asyncio.to_thread(input)
         envelope = ProviderEnvelope(
+            event_id=record.get("event_id"),
             connection_id=record["connection_id"],
             session_id=record["session_id"],
             received_at=received,
@@ -68,7 +81,10 @@ async def replay_file(path: Path, speed: str, publish: bool, reset: bool) -> dic
             output = await pipeline.process(envelope)
         else:
             output = pipeline.adapter.process(envelope)
-        valid, invalid = (1 if output.tick else 0, len(output.quality_events))
+        valid = 1 if output.tick else 0
+        invalid = sum(
+            quality.classification in {"BAD", "UNPARSEABLE"} for quality in output.quality_events
+        )
         counters["total_raw_events"] += 1
         counters["valid_ticks"] += valid
         counters["invalid_events"] += invalid
@@ -78,8 +94,27 @@ async def replay_file(path: Path, speed: str, publish: bool, reset: bool) -> dic
         counters["out_of_order_events"] += sum(
             quality.classification == "OUT_OF_ORDER" for quality in output.quality_events
         )
+        instrument = record["payload"].get("instrument")
+        if is_supported_instrument(instrument):
+            pair = pairs[instrument]
+            pair["raw"] += 1
+            pair["normalized"] += valid
+            pair["warnings"] += sum(
+                quality.classification == "WARNING" for quality in output.quality_events
+            )
+            pair["invalid"] += sum(
+                quality.classification in {"BAD", "UNPARSEABLE"}
+                for quality in output.quality_events
+            )
+            pair["duplicates"] += sum(
+                quality.classification == "DUPLICATE" for quality in output.quality_events
+            )
+            pair["out_of_order"] += sum(
+                quality.classification == "OUT_OF_ORDER" for quality in output.quality_events
+            )
         previous_received = received
     counters["elapsed_seconds"] = round(perf_counter() - started, 6)
+    counters["pairs"] = pairs
     if bus:
         await bus.close()
     if storage:

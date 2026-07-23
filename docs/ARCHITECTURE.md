@@ -1,42 +1,49 @@
 # Architecture
 
-The implementation is a modular monorepo with one collector process and local
-infrastructure.
-
 ```text
 IC wrapper + MetaTrader iframe
-  -> MT5 binary WebSocket transport
-  -> visible EURUSD market-watch row
-  -> MV3 targeted DOM quote observer
-  -> persistent bounded outbox + retry/ack
-  -> authenticated loopback provider endpoint
+  -> four visible Market Watch rows
+  -> MV3 exact-header DOM observer
+  -> persistent bounded per-pair outbox
+  -> authenticated loopback collector
+  -> bounded per-pair FIFO queues + round-robin scheduler
   -> immutable RAW_PROVIDER_EVENT
-  -> IC Markets adapter
-  -> deterministic validation/state reconstruction
-  -> PRICE_TICK + DATA_QUALITY_EVENT
-  -> Redis Streams/current quote + TimescaleDB
-  -> Prometheus metrics -> provisioned Grafana dashboard
+  -> registry-backed IC Markets adapter
+  -> PRICE_TICK v0.2 + DATA_QUALITY_EVENT
+  -> Redis Streams/four latest keys + TimescaleDB
+  -> per-pair Prometheus metrics + provisioned Grafana dashboard
 ```
 
-The adapter SDK separates the `LIVE_FX_QUOTE` capability from IC Markets-specific
-translation. Raw input is stored before normalized output. State is keyed by
-connection, session, and instrument, and is invalidated on disconnect. Consumers
-use Redis consumer groups and acknowledge only after work succeeds. Durable inserts
-are idempotent through composite primary keys.
+`packages/contracts/instrument_specs.json` is the single source of truth for
+symbols, currencies, pip sizes, display precision, plausibility bounds, and warning
+thresholds. A deterministic generator creates the Python and TypeScript artifacts;
+CI rejects drift.
 
-Every browser document receives an account-free random session identifier combined
-with browser-run, tab, and frame identity. A two-second browser heartbeat reports
-observer readiness and outbox counters independently from feed freshness. The
-collector health response separates bridge connection, last browser message, last
-valid display quote, and stale-feed state.
+The browser observes `EURUSD`, `GBPUSD`, `USDJPY`, and `AUDUSD` independently.
+Discovery scans at most 32 tables and 512 rows, maps exact Symbol/Bid/Ask headers,
+ignores hidden responsive duplicates, accepts identical duplicates, and marks only
+a pair with conflicting visible duplicates `AMBIGUOUS`. Target replacement uses a
+bounded 100 ms reacquisition schedule.
 
-The observed MT5 transport is a binary `ArrayBuffer` WebSocket using a provider
-codec. The project does not reverse engineer or bypass that codec. The evidence-backed
-fallback observes only the browser-rendered EURUSD symbol, bid, and ask. Since that
-surface exposes no provider timestamp or sequence, normalized ticks retain a null
-provider timestamp and an explicit `PROVIDER_TIMESTAMP_UNAVAILABLE` warning. Events
-are labeled `VISIBLE_DOM`, `DISPLAY_QUOTE`, and `is_provider_tick=false`.
+Every browser document has account-free browser-run, tab, frame, and document
+identity. A two-second heartbeat reports bridge state plus target, observation, and
+outbox state per pair. Bridge connectivity and quote freshness are separate health
+dimensions.
 
-WebSocket discovery is disabled by default. When explicitly enabled for supervised
-troubleshooting, candidates are size-limited, redacted in the extension, redacted
-again by the collector, and never retained in extension-local last-frame storage.
+The persistent outbox reserves capacity per pair, keeps FIFO order within a pair,
+and services pair groups round-robin. The collector repeats that structure with
+bounded per-pair asyncio queues. A failing or high-rate pair cannot prevent another
+pair from being attempted.
+
+Raw input is stored before normalized output. Adapter state is keyed by connection,
+session, and instrument and invalidated on disconnect. Redis current state uses one
+key per pair; TimescaleDB carries instrument and v0.2 base/quote currency fields.
+Durable inserts and browser retries are idempotent by stable event ID.
+
+All four feeds are visible display quotes. The rendered rows expose no provider
+timestamp or sequence, so v0.2 keeps `provider_event_time=null`,
+`sequence=null`, and `PROVIDER_TIMESTAMP_UNAVAILABLE`. Events are labeled
+`VISIBLE_DOM`, `DISPLAY_QUOTE`, and `is_provider_tick=false`.
+
+Supervised WebSocket discovery remains OFF by default. It is bounded and redacted
+client-side and server-side and is not used by the normal quote path.

@@ -1,22 +1,46 @@
+import {
+  INSTRUMENT_SPECS,
+  SUPPORTED_INSTRUMENTS,
+  type SupportedInstrument,
+  isSupportedInstrument,
+} from "./instruments.generated";
+
 export type VisibleQuote = {
+  instrument: SupportedInstrument;
   bid: string;
   ask: string;
 };
 
 export type QuoteTarget = {
+  instrument: SupportedInstrument;
   table: Element;
   row: Element;
   bidCell: Element;
   askCell: Element;
 };
 
+export type PairTargetStatus = "FOUND" | "READY" | "MISSING" | "AMBIGUOUS" | "STALE";
+
+export type PairObserverState = {
+  status: PairTargetStatus;
+  lastObservationAt: string | null;
+};
+
+export type PairObserverSnapshot = Record<SupportedInstrument, PairObserverState>;
+
+type DiscoveryResult =
+  | { status: "MISSING" | "AMBIGUOUS"; target: null }
+  | { status: "FOUND"; target: QuoteTarget };
+
 type QuoteCallback = (quote: VisibleQuote) => void;
+type StatusCallback = (status: PairObserverSnapshot) => void;
 
 const ROW_SELECTOR = "tr,[role='row']";
 const CELL_SELECTOR = "td,[role='cell']";
 const HEADER_SELECTOR = "th,[role='columnheader']";
 const TABLE_SELECTOR = "table,[role='table'],[role='grid']";
-const PRICE_PATTERN = /^\d+\.\d{4,6}$/;
+const MAX_TABLES = 32;
+const MAX_ROWS = 512;
 
 function normalizedText(element: Element): string {
   return (element.textContent ?? "").replace(/\s+/g, " ").trim();
@@ -48,24 +72,33 @@ function columnIndexes(table: Element): { symbol: number; bid: number; ask: numb
   return symbol >= 0 && bid >= 0 && ask >= 0 ? { symbol, bid, ask } : null;
 }
 
-function quoteFromCells(bidCell: Element, askCell: Element): VisibleQuote | null {
+function quoteFromCells(
+  instrument: SupportedInstrument,
+  bidCell: Element,
+  askCell: Element,
+): VisibleQuote | null {
   if (!isElementVisible(bidCell) || !isElementVisible(askCell)) return null;
   const bid = normalizedText(bidCell);
   const ask = normalizedText(askCell);
-  if (!PRICE_PATTERN.test(bid) || !PRICE_PATTERN.test(ask)) return null;
+  const spec = INSTRUMENT_SPECS[instrument];
+  const pattern = new RegExp(
+    `^\\d+\\.\\d{${spec.display_decimal_min},${spec.display_decimal_max}}$`,
+  );
+  if (!pattern.test(bid) || !pattern.test(ask)) return null;
   const bidValue = Number(bid);
   const askValue = Number(ask);
+  const minimum = Number(spec.broad_min_price);
+  const maximum = Number(spec.broad_max_price);
   if (
     !Number.isFinite(bidValue) ||
     !Number.isFinite(askValue) ||
-    bidValue <= 0.5 ||
-    bidValue >= 2 ||
-    askValue < bidValue ||
-    askValue - bidValue > 0.01
+    bidValue < minimum ||
+    askValue > maximum ||
+    askValue < bidValue
   ) {
     return null;
   }
-  return { bid, ask };
+  return { instrument, bid, ask };
 }
 
 export function readQuote(target: QuoteTarget): VisibleQuote | null {
@@ -77,114 +110,228 @@ export function readQuote(target: QuoteTarget): VisibleQuote | null {
   ) {
     return null;
   }
-  return quoteFromCells(target.bidCell, target.askCell);
+  return quoteFromCells(target.instrument, target.bidCell, target.askCell);
 }
 
-export function findEurUsdQuoteTarget(root: ParentNode = document): QuoteTarget | null {
-  const matches: Array<{ target: QuoteTarget; quote: VisibleQuote }> = [];
-  for (const table of Array.from(root.querySelectorAll(TABLE_SELECTOR))) {
+export function findQuoteTargets(
+  root: ParentNode = document,
+): Record<SupportedInstrument, DiscoveryResult> {
+  const matches = Object.fromEntries(
+    SUPPORTED_INSTRUMENTS.map((instrument) => [instrument, []]),
+  ) as unknown as Record<
+    SupportedInstrument,
+    Array<{ target: QuoteTarget; quote: VisibleQuote }>
+  >;
+  let visitedRows = 0;
+  for (const table of Array.from(root.querySelectorAll(TABLE_SELECTOR)).slice(0, MAX_TABLES)) {
     if (!isElementVisible(table)) continue;
     const indexes = columnIndexes(table);
     if (!indexes) continue;
     const rows = ownedDescendants(table, ROW_SELECTOR, TABLE_SELECTOR);
     for (const row of rows) {
+      visitedRows += 1;
+      if (visitedRows > MAX_ROWS) break;
       if (!isElementVisible(row)) continue;
       const cells = ownedDescendants(row, CELL_SELECTOR, ROW_SELECTOR);
       const symbolCell = cells[indexes.symbol];
+      const symbol = symbolCell ? normalizedText(symbolCell).toUpperCase() : "";
+      if (!isSupportedInstrument(symbol)) continue;
       const bidCell = cells[indexes.bid];
       const askCell = cells[indexes.ask];
-      if (
-        !symbolCell ||
-        !bidCell ||
-        !askCell ||
-        normalizedText(symbolCell).toUpperCase() !== "EURUSD"
-      ) {
-        continue;
+      if (!bidCell || !askCell) continue;
+      const quote = quoteFromCells(symbol, bidCell, askCell);
+      if (quote) {
+        matches[symbol].push({
+          target: { instrument: symbol, table, row, bidCell, askCell },
+          quote,
+        });
       }
-      const quote = quoteFromCells(bidCell, askCell);
-      if (quote) matches.push({ target: { table, row, bidCell, askCell }, quote });
     }
+    if (visitedRows > MAX_ROWS) break;
   }
-  if (matches.length === 0) return null;
-  const uniqueQuotes = new Set(matches.map(({ quote }) => `${quote.bid}:${quote.ask}`));
-  return uniqueQuotes.size === 1 ? (matches[0]?.target ?? null) : null;
+  return Object.fromEntries(
+    SUPPORTED_INSTRUMENTS.map((instrument) => {
+      const candidates = matches[instrument];
+      if (candidates.length === 0) {
+        return [instrument, { status: "MISSING", target: null }];
+      }
+      const quotes = new Set(candidates.map(({ quote }) => `${quote.bid}:${quote.ask}`));
+      if (quotes.size !== 1) {
+        return [instrument, { status: "AMBIGUOUS", target: null }];
+      }
+      return [instrument, { status: "FOUND", target: candidates[0]!.target }];
+    }),
+  ) as Record<SupportedInstrument, DiscoveryResult>;
 }
 
-export class TargetedQuoteObserver {
-  private target: QuoteTarget | null = null;
+export function findEurUsdQuoteTarget(root: ParentNode = document): QuoteTarget | null {
+  return findQuoteTargets(root).EURUSD.target;
+}
+
+export class MultiQuoteObserver {
+  private targets = new Map<SupportedInstrument, QuoteTarget>();
   private targetObserver: MutationObserver | null = null;
   private acquisitionObserver: MutationObserver | null = null;
-  private lastQuote = "";
+  private staleTimer: number | null = null;
+  private acquireTimer: number | null = null;
+  private lastQuotes = new Map<SupportedInstrument, string>();
+  private states = Object.fromEntries(
+    SUPPORTED_INSTRUMENTS.map((instrument) => [
+      instrument,
+      { status: "MISSING", lastObservationAt: null },
+    ]),
+  ) as PairObserverSnapshot;
 
   constructor(
     private readonly onQuote: QuoteCallback,
+    private readonly onStatus: StatusCallback = () => undefined,
     private readonly root: Document = document,
+    private readonly staleAfterMs = 10_000,
   ) {}
 
   start(): void {
     this.acquire();
+    this.staleTimer = window.setInterval(() => this.markStale(), 1_000);
   }
 
   stop(): void {
     this.targetObserver?.disconnect();
     this.acquisitionObserver?.disconnect();
+    if (this.staleTimer !== null) window.clearInterval(this.staleTimer);
+    if (this.acquireTimer !== null) window.clearTimeout(this.acquireTimer);
     this.targetObserver = null;
     this.acquisitionObserver = null;
-    this.target = null;
+    this.staleTimer = null;
+    this.acquireTimer = null;
+    this.targets.clear();
+  }
+
+  snapshot(): PairObserverSnapshot {
+    return structuredClone(this.states);
+  }
+
+  private publishStatus(): void {
+    this.onStatus(this.snapshot());
   }
 
   private emitCurrent(): void {
-    if (!this.target) return;
-    const quote = readQuote(this.target);
-    if (!quote) {
-      this.acquire();
-      return;
+    let reacquire = false;
+    for (const instrument of SUPPORTED_INSTRUMENTS) {
+      const target = this.targets.get(instrument);
+      if (!target) continue;
+      const quote = readQuote(target);
+      if (!quote) {
+        reacquire = true;
+        continue;
+      }
+      const key = `${quote.bid}:${quote.ask}`;
+      if (key === this.lastQuotes.get(instrument)) continue;
+      const observedAt = new Date().toISOString();
+      this.lastQuotes.set(instrument, key);
+      this.states[instrument] = { status: "READY", lastObservationAt: observedAt };
+      this.onQuote(quote);
     }
-    const key = `${quote.bid}:${quote.ask}`;
-    if (key === this.lastQuote) return;
-    this.lastQuote = key;
-    this.onQuote(quote);
+    this.publishStatus();
+    if (reacquire) this.scheduleAcquire();
   }
 
-  private watchTarget(target: QuoteTarget): void {
-    this.acquisitionObserver?.disconnect();
-    this.acquisitionObserver = null;
+  private watchTargets(): void {
     this.targetObserver?.disconnect();
-    this.target = target;
-    this.targetObserver = new MutationObserver(() => {
-      if (!this.target?.row.isConnected) {
-        this.acquire();
-        return;
-      }
-      this.emitCurrent();
-    });
-    this.targetObserver.observe(target.table.parentElement ?? target.table, {
-      childList: true,
-      characterData: true,
-      subtree: true,
-    });
-    this.emitCurrent();
+    this.targetObserver = new MutationObserver(() => this.emitCurrent());
+    const roots = new Set(
+      Array.from(this.targets.values()).map(
+        (target) => target.table.parentElement ?? target.table,
+      ),
+    );
+    for (const root of roots) {
+      this.targetObserver.observe(root, {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+    }
+  }
+
+  private scheduleAcquire(): void {
+    if (this.acquireTimer !== null) return;
+    this.acquireTimer = window.setTimeout(() => {
+      this.acquireTimer = null;
+      this.acquire();
+    }, 100);
   }
 
   private acquire(): void {
-    this.targetObserver?.disconnect();
-    this.targetObserver = null;
-    this.target = null;
-    const target = findEurUsdQuoteTarget(this.root);
-    if (target) {
-      this.watchTarget(target);
-      return;
+    const results = findQuoteTargets(this.root);
+    this.targets.clear();
+    for (const instrument of SUPPORTED_INSTRUMENTS) {
+      const result = results[instrument];
+      if (result.target) {
+        this.targets.set(instrument, result.target);
+        this.states[instrument] = {
+          status: "FOUND",
+          lastObservationAt: this.states[instrument].lastObservationAt,
+        };
+      } else {
+        this.states[instrument] = {
+          status: result.status,
+          lastObservationAt: this.states[instrument].lastObservationAt,
+        };
+      }
     }
-    if (this.acquisitionObserver) return;
-    const observationRoot = this.root.documentElement ?? this.root;
-    this.acquisitionObserver = new MutationObserver(() => {
-      const next = findEurUsdQuoteTarget(this.root);
-      if (next) this.watchTarget(next);
-    });
-    this.acquisitionObserver.observe(observationRoot, {
-      childList: true,
-      characterData: true,
-      subtree: true,
-    });
+    this.watchTargets();
+    if (!this.acquisitionObserver) {
+      const observationRoot = this.root.documentElement ?? this.root;
+      this.acquisitionObserver = new MutationObserver(() => {
+        const targetRemoved = Array.from(this.targets.values()).some(
+          (target) => !target.row.isConnected || !target.table.isConnected,
+        );
+        const incomplete = SUPPORTED_INSTRUMENTS.some(
+          (instrument) =>
+            this.states[instrument].status === "MISSING" ||
+            this.states[instrument].status === "AMBIGUOUS",
+        );
+        if (targetRemoved || incomplete) this.scheduleAcquire();
+      });
+      this.acquisitionObserver.observe(observationRoot, {
+        childList: true,
+        subtree: true,
+      });
+    }
+    this.emitCurrent();
+  }
+
+  private markStale(): void {
+    const now = Date.now();
+    let changed = false;
+    for (const instrument of SUPPORTED_INSTRUMENTS) {
+      const state = this.states[instrument];
+      if (
+        state.status === "READY" &&
+        state.lastObservationAt &&
+        now - Date.parse(state.lastObservationAt) > this.staleAfterMs
+      ) {
+        this.states[instrument] = { ...state, status: "STALE" };
+        changed = true;
+      }
+    }
+    if (changed) this.publishStatus();
+  }
+}
+
+export class TargetedQuoteObserver {
+  private readonly observer: MultiQuoteObserver;
+
+  constructor(onQuote: (quote: { bid: string; ask: string }) => void, root = document) {
+    this.observer = new MultiQuoteObserver((quote) => {
+      if (quote.instrument === "EURUSD") onQuote({ bid: quote.bid, ask: quote.ask });
+    }, undefined, root);
+  }
+
+  start(): void {
+    this.observer.start();
+  }
+
+  stop(): void {
+    this.observer.stop();
   }
 }

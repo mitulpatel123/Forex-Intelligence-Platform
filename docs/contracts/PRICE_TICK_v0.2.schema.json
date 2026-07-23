@@ -1,0 +1,144 @@
+{
+  "$defs": {
+    "AssetClass": {
+      "enum": ["FX"],
+      "title": "AssetClass",
+      "type": "string"
+    },
+    "QualityStatus": {
+      "enum": [
+        "GOOD",
+        "WARNING",
+        "BAD",
+        "DUPLICATE",
+        "LATE",
+        "OUT_OF_ORDER",
+        "STALE",
+        "UNPARSEABLE"
+      ],
+      "title": "QualityStatus",
+      "type": "string"
+    },
+    "SupportedInstrument": {
+      "enum": ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD"],
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Milestone 2 registry-backed four-pair display quote.",
+  "properties": {
+    "event_id": {"title": "Event Id", "type": "string"},
+    "schema_version": {
+      "const": "0.2",
+      "default": "0.2",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "event_type": {
+      "const": "PRICE_TICK",
+      "default": "PRICE_TICK",
+      "title": "Event Type",
+      "type": "string"
+    },
+    "source": {"default": "WEB_TERMINAL", "title": "Source", "type": "string"},
+    "observation_level": {
+      "default": "PROVIDER_TICK",
+      "enum": ["DISPLAY_QUOTE", "PROVIDER_TICK"],
+      "title": "Observation Level",
+      "type": "string"
+    },
+    "is_provider_tick": {
+      "default": true,
+      "title": "Is Provider Tick",
+      "type": "boolean"
+    },
+    "provider": {
+      "const": "IC_MARKETS",
+      "default": "IC_MARKETS",
+      "title": "Provider",
+      "type": "string"
+    },
+    "adapter_instance_id": {"title": "Adapter Instance Id", "type": "string"},
+    "instrument": {"$ref": "#/$defs/SupportedInstrument"},
+    "asset_class": {"$ref": "#/$defs/AssetClass", "default": "FX"},
+    "provider_event_time": {
+      "anyOf": [{"format": "date-time", "type": "string"}, {"type": "null"}],
+      "title": "Provider Event Time"
+    },
+    "received_at": {"format": "date-time", "title": "Received At", "type": "string"},
+    "normalized_at": {
+      "format": "date-time",
+      "title": "Normalized At",
+      "type": "string"
+    },
+    "sequence": {
+      "anyOf": [{"type": "integer"}, {"type": "null"}],
+      "default": null,
+      "title": "Sequence"
+    },
+    "raw_event_id": {"title": "Raw Event Id", "type": "string"},
+    "raw_payload_hash": {"title": "Raw Payload Hash", "type": "string"},
+    "quality_status": {"$ref": "#/$defs/QualityStatus"},
+    "quality_flags": {
+      "items": {"type": "string"},
+      "title": "Quality Flags",
+      "type": "array"
+    },
+    "trace_id": {"title": "Trace Id", "type": "string"},
+    "base_currency": {"title": "Base Currency", "type": "string"},
+    "quote_currency": {"title": "Quote Currency", "type": "string"},
+    "bid": {
+      "anyOf": [{"type": "number"}, {"type": "string"}],
+      "title": "Bid"
+    },
+    "ask": {
+      "anyOf": [{"type": "number"}, {"type": "string"}],
+      "title": "Ask"
+    },
+    "mid": {
+      "anyOf": [{"type": "number"}, {"type": "string"}],
+      "title": "Mid"
+    },
+    "spread": {
+      "anyOf": [{"type": "number"}, {"type": "string"}],
+      "title": "Spread"
+    },
+    "spread_pips": {
+      "anyOf": [{"type": "number"}, {"type": "string"}],
+      "title": "Spread Pips"
+    },
+    "pip_size": {
+      "anyOf": [{"type": "number"}, {"type": "string"}],
+      "title": "Pip Size"
+    },
+    "is_snapshot": {"title": "Is Snapshot", "type": "boolean"},
+    "changed_fields": {
+      "items": {"enum": ["bid", "ask"], "type": "string"},
+      "title": "Changed Fields",
+      "type": "array"
+    }
+  },
+  "required": [
+    "adapter_instance_id",
+    "instrument",
+    "provider_event_time",
+    "received_at",
+    "normalized_at",
+    "raw_event_id",
+    "raw_payload_hash",
+    "quality_status",
+    "trace_id",
+    "base_currency",
+    "quote_currency",
+    "bid",
+    "ask",
+    "mid",
+    "spread",
+    "spread_pips",
+    "pip_size",
+    "is_snapshot",
+    "changed_fields"
+  ],
+  "title": "PriceTickV02",
+  "type": "object"
+}

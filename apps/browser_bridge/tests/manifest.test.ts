@@ -5,6 +5,8 @@ const manifest = JSON.parse(
   readFileSync(new URL("../manifest.json", import.meta.url), "utf8"),
 ) as {
   manifest_version: number;
+  version: string;
+  description: string;
   permissions: string[];
   host_permissions: string[];
   content_scripts: Array<{
@@ -26,6 +28,8 @@ const pageObserverSource = readFileSync(
 describe("manifest safety", () => {
   it("uses MV3 and no broad host access", () => {
     expect(manifest.manifest_version).toBe(3);
+    expect(manifest.version).toBe("0.2.0");
+    expect(manifest.description).toContain("four visible FX display quotes");
     expect(manifest.host_permissions).not.toContain("<all_urls>");
     expect(manifest.host_permissions.every((host) => host.startsWith("https://") || host === "http://127.0.0.1:8001/*")).toBe(true);
   });

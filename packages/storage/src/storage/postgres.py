@@ -85,12 +85,13 @@ class PostgresStorage:
                 """
                 INSERT INTO price_ticks (
                   event_id, schema_version, provider, adapter_instance, instrument,
-                  source, observation_level, is_provider_tick,
+                  base_currency, quote_currency, source, observation_level, is_provider_tick,
                   bid, ask, mid, spread, spread_pips, pip_size, provider_event_time,
                   received_time, normalized_time, sequence, snapshot, changed_fields,
                   quality_status, quality_flags, raw_event_id, trace_id
                 ) VALUES (
                   %(event_id)s, %(schema_version)s, %(provider)s, %(adapter)s, %(instrument)s,
+                  %(base_currency)s, %(quote_currency)s,
                   %(source)s, %(observation_level)s, %(is_provider_tick)s,
                   %(bid)s, %(ask)s, %(mid)s, %(spread)s, %(spread_pips)s, %(pip_size)s,
                   %(provider_time)s, %(received)s, %(normalized)s, %(sequence)s, %(snapshot)s,
@@ -104,6 +105,8 @@ class PostgresStorage:
                     "provider": event.provider,
                     "adapter": event.adapter_instance_id,
                     "instrument": event.instrument,
+                    "base_currency": event.base_currency,
+                    "quote_currency": event.quote_currency,
                     "source": event.source,
                     "observation_level": event.observation_level,
                     "is_provider_tick": event.is_provider_tick,

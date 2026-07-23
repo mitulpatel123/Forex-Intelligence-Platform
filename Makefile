@@ -1,10 +1,17 @@
-.PHONY: setup format lint typecheck test secret-scan infra-up infra-down migrate integration-test smoke load-test run health
+.PHONY: setup generate-contracts check-generated format lint typecheck test secret-scan infra-up infra-down migrate integration-test smoke load-test run health
 
 setup:
 	uv sync --extra dev
 	corepack enable
 	pnpm install --frozen-lockfile
+	$(MAKE) generate-contracts
 	pnpm extension:build
+
+generate-contracts:
+	uv run python scripts/generate_contracts.py
+
+check-generated:
+	uv run python scripts/generate_contracts.py --check
 
 format:
 	uv run ruff format .
@@ -17,7 +24,7 @@ typecheck:
 	pnpm extension:typecheck
 
 test:
-	uv run pytest -q packages adapters
+	uv run pytest -q packages adapters apps/collector/tests
 	pnpm extension:test
 
 secret-scan:

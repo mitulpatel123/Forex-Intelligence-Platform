@@ -22,4 +22,38 @@ void chrome.runtime.sendMessage({ type: "GET_STATUS" }).then((response: unknown)
       element.textContent = String(status[key] ?? "0");
     }
   }
+  const rows = document.querySelector("#pairs");
+  if (!rows) return;
+  const byInstrument =
+    typeof status.byInstrument === "object" && status.byInstrument !== null
+      ? (status.byInstrument as Record<string, Record<string, unknown>>)
+      : {};
+  const pending =
+    typeof status.pendingByInstrument === "object" &&
+    status.pendingByInstrument !== null
+      ? (status.pendingByInstrument as Record<string, unknown>)
+      : {};
+  const pairStatuses =
+    typeof status.pairStatuses === "object" && status.pairStatuses !== null
+      ? (status.pairStatuses as Record<string, { status?: unknown }>)
+      : {};
+  for (const instrument of SUPPORTED_INSTRUMENTS) {
+    const stats = byInstrument[instrument] ?? {};
+    const row = document.createElement("tr");
+    const values: Array<string | number> = [
+      instrument,
+      String(pairStatuses[instrument]?.status ?? "MISSING"),
+      Number(pending[instrument] ?? 0),
+      Number(stats.retries ?? 0),
+      Number(stats.dropped ?? 0),
+      Number(stats.rejected ?? 0),
+    ];
+    for (const value of values) {
+      const cell = document.createElement("td");
+      cell.textContent = String(value);
+      row.append(cell);
+    }
+    rows.append(row);
+  }
 });
+import { SUPPORTED_INSTRUMENTS } from "./instruments.generated";
