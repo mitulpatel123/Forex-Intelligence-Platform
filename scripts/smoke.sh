@@ -1,7 +1,11 @@
 #!/bin/sh
 set -eu
 
-docker compose up -d --wait redis timescaledb prometheus grafana
+if [ "${FIP_SMOKE_REUSE_DATA_SERVICES:-false}" = "true" ]; then
+  docker compose up --no-deps -d --wait prometheus grafana
+else
+  docker compose up -d --wait redis timescaledb prometheus grafana
+fi
 uv run python scripts/migrate.py
 
 uv run forex-collector >.smoke-collector.log 2>&1 &
@@ -21,13 +25,7 @@ done
 uv run forex-replay adapters/ic_markets/fixtures/replay_four_pair_mixed.jsonl --publish --reset
 curl -fsS http://127.0.0.1:8001/health/live | grep -q '"status":"UP"'
 curl -fsS http://127.0.0.1:8001/metrics | grep -q 'normalized_ticks_total'
-for instrument in EURUSD GBPUSD USDJPY AUDUSD; do
-  docker compose exec -T redis redis-cli GET "latest:quote:IC_MARKETS:$instrument" | grep -q PRICE_TICK
-done
-docker compose exec -T timescaledb psql -U forex -d forex -Atc \
-  "SELECT count(DISTINCT instrument) FROM price_ticks" | grep -q '^4$'
-docker compose exec -T timescaledb psql -U forex -d forex -Atc \
-  "SELECT count(*) FROM raw_provider_events" | grep -Eq '^[1-9][0-9]*$'
+uv run python scripts/smoke_verify.py
 curl -fsS http://127.0.0.1:9090/-/healthy >/dev/null
 attempt=0
 until curl -fsS http://127.0.0.1:9090/api/v1/targets | grep -q '"health":"up"'; do

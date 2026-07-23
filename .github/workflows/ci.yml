@@ -87,6 +87,8 @@ jobs:
           uv run pytest -q tests/integration
 
       - name: End-to-end smoke test
+        env:
+          FIP_SMOKE_REUSE_DATA_SERVICES: "true"
         run: make smoke
 
       - name: Bounded four-pair load test
