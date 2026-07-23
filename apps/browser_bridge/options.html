@@ -5,6 +5,13 @@
     <h1>Local bridge token</h1>
     <p>Copy the token from <code>.local/bridge-token</code>. This is not an IC Markets credential.</p>
     <input id="token" type="password" autocomplete="off" size="48">
+    <p>
+      <label>
+        <input id="discovery-mode" type="checkbox">
+        Enable binary/text WebSocket discovery (OFF by default)
+      </label>
+    </p>
+    <p><strong>Warning:</strong> discovery mode is for short, supervised troubleshooting only.</p>
     <button id="save" type="button">Save locally</button>
     <output id="result"></output>
     <script src="dist/options.js"></script>

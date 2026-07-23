@@ -30,7 +30,11 @@ Open `chrome://extensions`, enable Developer mode, load
 copy the local token from `.local/bridge-token`. This token is only for localhost;
 never enter an IC Markets credential. Manually log in/MFA and display EURUSD in
 Market Watch. The popup should change from `waiting for EUR/USD` to `receiving`.
-Do not use trading controls.
+`Pending` should normally return to zero, `Acknowledged` should increase, and
+`Dropped`/`Rejected` should remain zero. Do not use trading controls.
+
+Leave **binary/text WebSocket discovery OFF** in Options. Enable it only for a short,
+supervised discovery session; normal collection never decodes binary frames.
 
 Verify the live path:
 
@@ -43,3 +47,14 @@ docker compose exec -T timescaledb psql -U forex -d forex -c \
 
 `provider_event_time` is null and quality is `WARNING` for this collection method
 because the visible terminal row does not expose the provider timestamp or sequence.
+The event is labeled `source=VISIBLE_DOM`, `observation_level=DISPLAY_QUOTE`, and
+`is_provider_tick=false`.
+
+For a soak check, record popup counters before and after the window and verify:
+
+```text
+acknowledged delta = unique live raw-event delta
+pending = 0
+dropped = 0
+rejected = 0
+```

@@ -154,12 +154,19 @@ def test_visible_dom_quote_without_provider_timestamp_is_published_with_warning(
                 "ask": "1.08544",
                 "provider_event_time": None,
                 "observation_source": "visible_dom",
+                # Provenance is derived from the trusted source classification,
+                # not from these client-supplied qualifier claims.
+                "observation_level": "PROVIDER_TICK",
+                "is_provider_tick": True,
             }
         }
     )
     output = IcMarketsAdapter().process(observed)
     assert output.tick is not None
     assert output.tick.provider_event_time is None
+    assert output.tick.source == "VISIBLE_DOM"
+    assert output.tick.observation_level == "DISPLAY_QUOTE"
+    assert output.tick.is_provider_tick is False
     assert output.tick.quality_status == QualityStatus.WARNING
     assert "PROVIDER_TIMESTAMP_UNAVAILABLE" in output.tick.quality_flags
     assert rule(output) == "TIME_PROVIDER_UNAVAILABLE"
@@ -226,6 +233,29 @@ def test_redaction_is_recursive() -> None:
     assert value["authorization"] == "[REDACTED]"
     assert "secret" not in value["nested"]["url"]
     assert paths
+
+
+def test_redaction_sanitizes_json_encoded_discovery_payloads() -> None:
+    value, paths = redact(
+        {
+            "payload": (
+                '{"account":123456,"login":"user","sessionId":"session-secret",'
+                '"accessToken":"token-secret","bid":"1.13743"}'
+            )
+        }
+    )
+    assert "123456" not in value["payload"]
+    assert "session-secret" not in value["payload"]
+    assert "token-secret" not in value["payload"]
+    assert "1.13743" in value["payload"]
+    assert paths
+
+
+def test_source_event_id_becomes_idempotent_raw_event_id() -> None:
+    output = IcMarketsAdapter().process(
+        envelope().model_copy(update={"event_id": "browser-observation-event"})
+    )
+    assert output.raw_event.event_id == "browser-observation-event"
 
 
 def test_contract_rejects_incorrect_derived_values_and_naive_time() -> None:

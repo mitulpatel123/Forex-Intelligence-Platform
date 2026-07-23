@@ -59,6 +59,8 @@ class EventBase(BaseModel):
     schema_version: Literal["0.1"] = "0.1"
     event_type: str
     source: str = "WEB_TERMINAL"
+    observation_level: Literal["DISPLAY_QUOTE", "PROVIDER_TICK"] = "PROVIDER_TICK"
+    is_provider_tick: bool = True
     provider: Literal["IC_MARKETS"] = "IC_MARKETS"
     adapter_instance_id: str
     instrument: str

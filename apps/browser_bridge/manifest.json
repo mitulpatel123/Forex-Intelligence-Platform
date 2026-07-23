@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "Forex Intelligence — IC Markets Discovery Bridge",
   "version": "0.1.0",
-  "description": "Captures narrowly filtered EUR/USD discovery evidence; never interacts with trades.",
-  "permissions": ["storage"],
+  "description": "Reliably forwards the visible EUR/USD display quote; never interacts with trades.",
+  "permissions": ["alarms", "storage"],
   "host_permissions": [
     "https://webtrader-sc.ic.com/*",
     "https://mt5web.icmarkets.com/*",
@@ -51,7 +51,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "IC Markets discovery bridge"
+    "default_title": "IC Markets EURUSD display bridge"
   },
   "options_page": "options.html"
 }

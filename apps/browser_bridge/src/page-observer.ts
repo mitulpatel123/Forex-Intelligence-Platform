@@ -1,9 +1,26 @@
-import { CHANNEL, MAX_PAYLOAD_BYTES, isEurUsdCandidate, redactText } from "./schema";
+import { TargetedQuoteObserver } from "./dom-observer";
+import {
+  CHANNEL,
+  CONFIG_CHANNEL,
+  MAX_PAYLOAD_BYTES,
+  isEurUsdCandidate,
+  redactText,
+} from "./schema";
 
 const NativeWebSocket = window.WebSocket;
-let lastVisibleQuote = "";
+let discoveryMode = false;
 
-async function inspectFrame(data: unknown): Promise<void> {
+window.addEventListener("message", (event: MessageEvent<unknown>) => {
+  if (event.source !== window || event.origin !== window.location.origin) return;
+  if (typeof event.data !== "object" || event.data === null) return;
+  const config = event.data as Record<string, unknown>;
+  if (config.channel === CONFIG_CHANNEL && typeof config.discoveryMode === "boolean") {
+    discoveryMode = config.discoveryMode;
+  }
+});
+
+async function inspectDiscoveryFrame(data: unknown): Promise<void> {
+  if (!discoveryMode) return;
   let payload: string;
   let frameType: "websocket-text" | "websocket-binary-utf8";
 
@@ -46,7 +63,7 @@ const ObserverWebSocket = new Proxy(NativeWebSocket, {
   construct(target, args, newTarget) {
     const socket = Reflect.construct(target, args, newTarget) as WebSocket;
     socket.addEventListener("message", (event: MessageEvent<unknown>) => {
-      void inspectFrame(event.data);
+      void inspectDiscoveryFrame(event.data);
     });
     return socket;
   },
@@ -54,82 +71,20 @@ const ObserverWebSocket = new Proxy(NativeWebSocket, {
 
 window.WebSocket = ObserverWebSocket;
 
-function visibleLeafText(root: Element): string[] {
-  return Array.from(root.querySelectorAll("*"))
-    .filter((element) => element.children.length === 0)
-    .filter((element) => {
-      const rect = element.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0;
-    })
-    .map((element) => element.textContent?.trim() ?? "")
-    .filter(Boolean);
-}
-
-function findVisibleEurUsdQuote(): { bid: string; ask: string } | null {
-  const symbolLeaves = Array.from(document.querySelectorAll("body *")).filter(
-    (element) => element.children.length === 0 && element.textContent?.trim() === "EURUSD",
-  );
-  for (const symbol of symbolLeaves) {
-    let candidate: Element | null = symbol.parentElement;
-    for (let depth = 0; candidate && depth < 6; depth += 1) {
-      const texts = visibleLeafText(candidate);
-      const prices = texts.filter((text) => /^\d+\.\d{4,6}$/.test(text));
-      if (texts.includes("EURUSD") && prices.length >= 2) {
-        const bidText = prices[0];
-        const askText = prices[1];
-        if (!bidText || !askText) {
-          candidate = candidate.parentElement;
-          continue;
-        }
-        const bid = Number(bidText);
-        const ask = Number(askText);
-        if (
-          Number.isFinite(bid) &&
-          Number.isFinite(ask) &&
-          bid > 0.5 &&
-          bid < 2 &&
-          ask >= bid &&
-          ask - bid <= 0.01
-        ) {
-          return { bid: bidText, ask: askText };
-        }
-      }
-      candidate = candidate.parentElement;
-    }
-  }
-  return null;
-}
-
-function inspectVisibleQuote(): void {
-  const quote = findVisibleEurUsdQuote();
-  if (!quote) return;
-  const quoteKey = `${quote.bid}:${quote.ask}`;
-  if (quoteKey === lastVisibleQuote) return;
-  lastVisibleQuote = quoteKey;
+const quoteObserver = new TargetedQuoteObserver((quote) => {
   window.postMessage(
     {
       channel: CHANNEL,
       frameType: "dom-visible-quote",
       receivedAt: new Date().toISOString(),
-      payload: JSON.stringify({
-        instrument: "EURUSD",
-        bid: quote.bid,
-        ask: quote.ask,
-      }),
+      payload: JSON.stringify({ instrument: "EURUSD", ...quote }),
     },
     window.location.origin,
   );
-}
-
-let inspectionQueued = false;
-const quoteObserver = new MutationObserver(() => {
-  if (inspectionQueued) return;
-  inspectionQueued = true;
-  requestAnimationFrame(() => {
-    inspectionQueued = false;
-    inspectVisibleQuote();
-  });
 });
 
-quoteObserver.observe(document, { childList: true, characterData: true, subtree: true });
-window.addEventListener("DOMContentLoaded", inspectVisibleQuote, { once: true });
+if (document.readyState === "loading") {
+  window.addEventListener("DOMContentLoaded", () => quoteObserver.start(), { once: true });
+} else {
+  quoteObserver.start();
+}

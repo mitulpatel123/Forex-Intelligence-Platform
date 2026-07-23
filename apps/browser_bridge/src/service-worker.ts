@@ -1,131 +1,230 @@
-type BridgeState = "connected" | "disconnected" | "waiting for EUR/USD" | "receiving" | "error";
+import {
+  DISCOVERY_INGEST_URL,
+  HEARTBEAT_URL,
+  PROVIDER_INGEST_URL,
+  browserIdentity,
+  discoveryRequest,
+  parseVisibleQuote,
+  providerRequest,
+} from "./bridge-protocol";
+import { PersistentOutbox, type OutboxEvent } from "./outbox";
+import { isCapturedFrame } from "./schema";
 
-const INGEST_URL = "http://127.0.0.1:8001/ingest/discovery";
-const PROVIDER_INGEST_URL = "http://127.0.0.1:8001/ingest/provider";
+type BridgeState = "disconnected" | "waiting for EUR/USD" | "receiving" | "error";
+
+const RETRY_ALARM = "fip-bridge-outbox-retry";
+const MAX_OUTBOX_SIZE = 1_000;
+const FETCH_TIMEOUT_MS = 5_000;
 let state: BridgeState = "disconnected";
-let attempt = 0;
+let browserRunIdPromise: Promise<string> | null = null;
 
 async function setState(next: BridgeState): Promise<void> {
   state = next;
   await chrome.storage.local.set({ bridgeState: next });
 }
 
-function boundedBackoffMs(): number {
-  const cap = Math.min(30_000, 500 * 2 ** attempt);
-  attempt += 1;
-  return Math.round(cap * (0.75 + Math.random() * 0.5));
+async function browserRunId(): Promise<string> {
+  if (browserRunIdPromise) return browserRunIdPromise;
+  browserRunIdPromise = (async () => {
+    const stored = await chrome.storage.session.get("browserRunId");
+    if (typeof stored.browserRunId === "string") return stored.browserRunId;
+    const generated = crypto.randomUUID();
+    await chrome.storage.session.set({ browserRunId: generated });
+    return generated;
+  })();
+  return browserRunIdPromise;
 }
 
-async function forward(frame: unknown): Promise<void> {
+async function identityFor(
+  sender: chrome.runtime.MessageSender,
+  documentSessionId: string,
+) {
+  return browserIdentity(
+    await browserRunId(),
+    sender.tab?.id ?? -1,
+    sender.frameId ?? 0,
+    documentSessionId,
+  );
+}
+
+async function authenticatedFetch(
+  url: string,
+  body: Record<string, unknown>,
+  timeoutMs = FETCH_TIMEOUT_MS,
+): Promise<Response> {
   const { bridgeToken } = await chrome.storage.local.get("bridgeToken");
   if (typeof bridgeToken !== "string" || bridgeToken.length < 32) {
     await setState("error");
-    return;
+    throw new Error("missing bridge token");
   }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(INGEST_URL, {
+    return await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-Bridge-Token": bridgeToken,
       },
-      body: JSON.stringify({
-        connection_id: "browser-websocket-observer",
-        session_id: "browser-session",
-        frame,
-      }),
+      body: JSON.stringify(body),
+      signal: controller.signal,
     });
-    if (!response.ok) throw new Error(`collector status ${response.status}`);
-    attempt = 0;
-    await setState("receiving");
-  } catch {
-    await setState("disconnected");
-    await new Promise((resolve) => setTimeout(resolve, boundedBackoffMs()));
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
-async function forwardVisibleQuote(frame: Record<string, unknown>): Promise<void> {
-  const { bridgeToken } = await chrome.storage.local.get("bridgeToken");
-  if (typeof bridgeToken !== "string" || bridgeToken.length < 32) {
-    await setState("error");
-    return;
-  }
-  if (typeof frame.payload !== "string" || typeof frame.receivedAt !== "string") return;
+const outbox = new PersistentOutbox({
+  maxSize: MAX_OUTBOX_SIZE,
+  storage: chrome.storage.local,
+  deliver: async (event: OutboxEvent) => {
+    const response = await authenticatedFetch(event.url, event.body);
+    if (response.ok) return { acknowledged: true, retryable: false };
+    const retryable =
+      response.status === 401 ||
+      response.status === 403 ||
+      response.status === 408 ||
+      response.status === 429 ||
+      response.status >= 500;
+    return { acknowledged: false, retryable };
+  },
+  schedule: async (when) => {
+    await chrome.alarms.create(RETRY_ALARM, { when });
+  },
+  onDelivery: async (result) => {
+    if (result === "acknowledged") await setState("receiving");
+    else if (result === "retrying") await setState("disconnected");
+    else await setState("error");
+  },
+});
 
-  let quote: unknown;
+function validDocumentSessionId(value: unknown): value is string {
+  return typeof value === "string" && /^[a-f0-9-]{36}$/i.test(value);
+}
+
+function senderOrigin(sender: chrome.runtime.MessageSender): string {
+  if (typeof sender.origin === "string") return sender.origin;
+  if (typeof sender.url !== "string") return "";
   try {
-    quote = JSON.parse(frame.payload);
+    return new URL(sender.url).origin;
   } catch {
-    return;
+    return "";
   }
-  if (typeof quote !== "object" || quote === null) return;
-  const candidate = quote as Record<string, unknown>;
+}
+
+async function sendHeartbeat(
+  sender: chrome.runtime.MessageSender,
+  documentSessionId: string,
+  observerReady: boolean,
+): Promise<void> {
+  const identity = await identityFor(sender, documentSessionId);
+  const snapshot = await outbox.snapshot();
+  try {
+    const response = await authenticatedFetch(
+      HEARTBEAT_URL,
+      {
+        connection_id: identity.connectionId,
+        session_id: identity.sessionId,
+        observer_ready: observerReady,
+        bridge_state: state,
+        outbox_pending: snapshot.pending,
+        outbox_produced: snapshot.stats.produced,
+        outbox_acknowledged: snapshot.stats.acknowledged,
+        outbox_retries: snapshot.stats.retries,
+        outbox_dropped: snapshot.stats.dropped,
+        outbox_rejected: snapshot.stats.rejected,
+      },
+      3_000,
+    );
+    if (!response.ok) throw new Error(`heartbeat status ${response.status}`);
+  } catch {
+    await setState("disconnected");
+  }
+}
+
+async function queueCapturedFrame(
+  candidate: Record<string, unknown>,
+  sender: chrome.runtime.MessageSender,
+): Promise<Record<string, unknown>> {
   if (
-    candidate.instrument !== "EURUSD" ||
-    typeof candidate.bid !== "string" ||
-    typeof candidate.ask !== "string"
+    !validDocumentSessionId(candidate.documentSessionId) ||
+    !isCapturedFrame(candidate.frame, senderOrigin(sender))
   ) {
-    return;
+    return { accepted: false, reason: "invalid frame" };
   }
-
-  try {
-    const response = await fetch(PROVIDER_INGEST_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Bridge-Token": bridgeToken,
-      },
-      body: JSON.stringify({
-        connection_id: "browser-visible-dom",
-        session_id: "browser-session",
-        received_at: frame.receivedAt,
-        semantics: "snapshot",
-        payload: {
-          instrument: "EURUSD",
-          bid: candidate.bid,
-          ask: candidate.ask,
-          provider_event_time: null,
-          observation_source: "visible_dom",
-        },
-        channel_metadata: {
-          capture_method: "visible_dom",
-          provider_transport: "wss_binary_arraybuffer",
-          provider_timestamp_available: false,
-        },
-      }),
-    });
-    if (!response.ok) throw new Error(`collector status ${response.status}`);
-    attempt = 0;
-    await setState("receiving");
-  } catch {
-    await setState("disconnected");
-    await new Promise((resolve) => setTimeout(resolve, boundedBackoffMs()));
-  }
-}
-
-chrome.runtime.onMessage.addListener((message: unknown) => {
-  if (typeof message !== "object" || message === null) return;
-  const candidate = message as Record<string, unknown>;
-  if (candidate.type === "GET_STATUS") return Promise.resolve({ state });
-  if (candidate.type === "OBSERVER_READY") {
-    if (state !== "receiving") void setState("waiting for EUR/USD");
-    return;
-  }
-  if (candidate.type !== "CAPTURED_FRAME") return;
-  // Preserve the last sanitized observation for local troubleshooting.
-  void chrome.storage.local.set({ lastSanitizedDiscoveryFrame: candidate.frame });
   const frame = candidate.frame;
-  if (
-    typeof frame === "object" &&
-    frame !== null &&
-    (frame as Record<string, unknown>).frameType === "dom-visible-quote"
-  ) {
-    void forwardVisibleQuote(frame as Record<string, unknown>);
+  const identity = await identityFor(sender, candidate.documentSessionId);
+  const eventId = crypto.randomUUID();
+  const quote = parseVisibleQuote(frame);
+  let event: OutboxEvent;
+  if (quote) {
+    event = {
+      eventId,
+      kind: "visible_quote",
+      url: PROVIDER_INGEST_URL,
+      body: providerRequest(eventId, identity, frame, quote),
+      attempts: 0,
+      nextAttemptAt: Date.now(),
+    };
   } else {
-    void forward(frame);
+    const { discoveryMode = false } = await chrome.storage.local.get("discoveryMode");
+    if (discoveryMode !== true) {
+      return { accepted: false, reason: "discovery mode disabled" };
+    }
+    event = {
+      eventId,
+      kind: "discovery",
+      url: DISCOVERY_INGEST_URL,
+      body: discoveryRequest(eventId, identity, frame),
+      attempts: 0,
+      nextAttemptAt: Date.now(),
+    };
   }
+  const queued = await outbox.enqueue(event);
+  if (queued) await outbox.drain();
+  return { accepted: queued, eventId, queued };
+}
+
+async function handleMessage(
+  message: unknown,
+  sender: chrome.runtime.MessageSender,
+): Promise<Record<string, unknown>> {
+  if (typeof message !== "object" || message === null) return { accepted: false };
+  const candidate = message as Record<string, unknown>;
+  if (candidate.type === "GET_STATUS") {
+    const snapshot = await outbox.snapshot();
+    const { discoveryMode = false } = await chrome.storage.local.get("discoveryMode");
+    return { state, discoveryMode, ...snapshot.stats, pending: snapshot.pending };
+  }
+  if (
+    (candidate.type === "OBSERVER_READY" ||
+      candidate.type === "BRIDGE_HEARTBEAT" ||
+      candidate.type === "OBSERVER_STOPPED") &&
+    validDocumentSessionId(candidate.documentSessionId)
+  ) {
+    const observerReady =
+      candidate.type === "BRIDGE_HEARTBEAT" && candidate.observerReady === true;
+    if (candidate.type === "OBSERVER_READY") await setState("waiting for EUR/USD");
+    if (candidate.type === "OBSERVER_STOPPED") await setState("disconnected");
+    await sendHeartbeat(sender, candidate.documentSessionId, observerReady);
+    return { accepted: true };
+  }
+  if (candidate.type === "CAPTURED_FRAME") return queueCapturedFrame(candidate, sender);
+  return { accepted: false };
+}
+
+chrome.runtime.onMessage.addListener((message, sender) => handleMessage(message, sender));
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === RETRY_ALARM) void outbox.drain();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  void outbox.drain();
 });
 
 chrome.runtime.onInstalled.addListener(() => {
-  void setState("disconnected");
+  void chrome.storage.local.set({ bridgeState: "disconnected", discoveryMode: false });
+  void chrome.storage.local.remove("lastSanitizedDiscoveryFrame");
+  void outbox.drain();
 });

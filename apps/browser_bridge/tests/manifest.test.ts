@@ -14,6 +14,14 @@ const manifest = JSON.parse(
     world?: string;
   }>;
 };
+const serviceWorkerSource = readFileSync(
+  new URL("../src/service-worker.ts", import.meta.url),
+  "utf8",
+);
+const pageObserverSource = readFileSync(
+  new URL("../src/page-observer.ts", import.meta.url),
+  "utf8",
+);
 
 describe("manifest safety", () => {
   it("uses MV3 and no broad host access", () => {
@@ -35,7 +43,21 @@ describe("manifest safety", () => {
     expect(manifest.content_scripts.every((script) => script.all_frames === true)).toBe(true);
   });
 
-  it("requests only extension-local storage", () => {
-    expect(manifest.permissions).toEqual(["storage"]);
+  it("requests only retry scheduling and extension-local storage", () => {
+    expect(manifest.permissions).toEqual(["alarms", "storage"]);
+  });
+
+  it("returns the asynchronous message handler to keep MV3 delivery alive", () => {
+    expect(serviceWorkerSource).toContain(
+      "chrome.runtime.onMessage.addListener((message, sender) => handleMessage(message, sender));",
+    );
+    expect(serviceWorkerSource).not.toContain("void queueCapturedFrame");
+    expect(serviceWorkerSource).not.toContain("lastSanitizedDiscoveryFrame: candidate.frame");
+  });
+
+  it("keeps WebSocket discovery disabled by default", () => {
+    expect(pageObserverSource).toContain("let discoveryMode = false");
+    expect(pageObserverSource).toContain("if (!discoveryMode) return");
+    expect(serviceWorkerSource).toContain('discoveryMode: false');
   });
 });

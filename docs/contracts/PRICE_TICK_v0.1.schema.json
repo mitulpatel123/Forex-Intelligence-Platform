@@ -4,14 +4,13 @@
   "title": "PRICE_TICK v0.1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["event_id","schema_version","event_type","source","provider","adapter_instance_id","instrument","asset_class","bid","ask","mid","spread","spread_pips","pip_size","quote_currency","is_snapshot","changed_fields","provider_event_time","received_at","normalized_at","sequence","raw_event_id","raw_payload_hash","quality_status","quality_flags","trace_id"],
+  "required": ["event_id","schema_version","event_type","source","observation_level","is_provider_tick","provider","adapter_instance_id","instrument","asset_class","bid","ask","mid","spread","spread_pips","pip_size","quote_currency","is_snapshot","changed_fields","provider_event_time","received_at","normalized_at","sequence","raw_event_id","raw_payload_hash","quality_status","quality_flags","trace_id"],
   "properties": {
     "schema_version":{"const":"0.1"},"event_type":{"const":"PRICE_TICK"},"provider":{"const":"IC_MARKETS"},"instrument":{"const":"EURUSD"},"asset_class":{"const":"FX"},
-    "event_id":{"type":"string","format":"uuid"},"source":{"type":"string"},"adapter_instance_id":{"type":"string"},
+    "event_id":{"type":"string","format":"uuid"},"source":{"enum":["VISIBLE_DOM","WEB_TERMINAL"]},"observation_level":{"enum":["DISPLAY_QUOTE","PROVIDER_TICK"]},"is_provider_tick":{"type":"boolean"},"adapter_instance_id":{"type":"string"},
     "bid":{"type":"string"},"ask":{"type":"string"},"mid":{"type":"string"},"spread":{"type":"string"},"spread_pips":{"type":"string"},"pip_size":{"const":"0.0001"},"quote_currency":{"const":"USD"},
     "is_snapshot":{"type":"boolean"},"changed_fields":{"type":"array","items":{"enum":["bid","ask"]}},
     "provider_event_time":{"type":["string","null"],"format":"date-time"},"received_at":{"type":"string","format":"date-time"},"normalized_at":{"type":"string","format":"date-time"},"sequence":{"type":["integer","null"]},
     "raw_event_id":{"type":"string"},"raw_payload_hash":{"type":"string","pattern":"^sha256:"},"quality_status":{"enum":["GOOD","WARNING","BAD","DUPLICATE","LATE","OUT_OF_ORDER","STALE","UNPARSEABLE"]},"quality_flags":{"type":"array","items":{"type":"string"}},"trace_id":{"type":"string"}
   }
 }
-

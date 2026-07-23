@@ -22,9 +22,11 @@ provider codec, inspect credentials, or persist broad binary traffic.
 
 ## Selected collection method
 
-The extension injects at `document_start` into the allowlisted terminal frames. It
-first attempts narrowly filtered text and bounded UTF-8 binary candidates. The
-evidence-backed live path observes only the visible EURUSD Market Watch row:
+The extension injects at `document_start` into the allowlisted terminal frames.
+Normal collection does not inspect WebSocket payloads. Binary/text discovery is an
+explicit setting that defaults to OFF. The evidence-backed live path locates a
+Market Watch table with exact Symbol, Bid, and Ask headers, acquires its unambiguous
+EURUSD row once, and then observes only that row:
 
 - the symbol must equal `EURUSD`;
 - bid and ask must be visible decimal values;
@@ -34,9 +36,14 @@ evidence-backed live path observes only the visible EURUSD Market Watch row:
 - no account, balance, order, cookie, token, or credential field is read;
 - no trading control is clicked or modified.
 
-The bridge sends the sanitized quote to authenticated `127.0.0.1` ingestion. Raw
-storage precedes normalization. Redis current state/streams, TimescaleDB history,
-Prometheus, and Grafana receive the resulting events.
+Each observation receives a UUID and enters a bounded persistent outbox. The
+service worker returns its asynchronous message promise, uses a five-second fetch
+timeout, retries temporary failures with the same UUID, and removes the event only
+after authenticated collector acknowledgement. Pending/retry/drop/ack counters are
+visible in the popup and reported by heartbeat.
+
+Raw storage precedes normalization. Redis current state/streams, TimescaleDB
+history, Prometheus, and Grafana receive the resulting events.
 
 ## Timestamp and update semantics
 
@@ -45,6 +52,8 @@ timestamp or sequence. Each changed display is therefore modeled as a full snaps
 The browser observation time is used only for receipt and ordering. The standard
 event keeps `provider_event_time = null`, `sequence = null`, quality status
 `WARNING`, and flag `PROVIDER_TIMESTAMP_UNAVAILABLE`. No provider time is invented.
+It is also qualified as `source=VISIBLE_DOM`,
+`observation_level=DISPLAY_QUOTE`, and `is_provider_tick=false`.
 
 Provider-level partial-update, heartbeat, and sequence semantics remain opaque
 behind the binary codec. The adapter's deterministic partial, duplicate,
@@ -65,6 +74,17 @@ terminal displayed EURUSD. The validated pipeline produced:
 A reviewed market-data-only sample is committed as
 `adapters/ic_markets/fixtures/live_visible_dom.jsonl`. It contains no account or
 authentication data.
+
+## Reliability and privacy controls
+
+- Account-free IDs distinguish browser run, tab, frame, and document session.
+- A two-second authenticated heartbeat separates bridge connection and observer
+  readiness from quote freshness.
+- Server-side recursive redaction runs even when the extension already redacted a
+  supervised discovery payload.
+- Normal collection never stores a last WebSocket frame in extension storage.
+- The outbox is capped at 1,000 events and exposes every explicit drop.
+- Collector idempotency uses the browser observation UUID, including ack-loss retry.
 
 ## Public wrapper evidence
 

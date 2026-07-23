@@ -13,3 +13,4 @@ class Settings(BaseSettings):
     bridge_token_file: str = ".local/bridge-token"  # noqa: S105
     queue_size: int = 10_000
     stale_after_seconds: float = 5.0
+    bridge_stale_after_seconds: float = 6.0

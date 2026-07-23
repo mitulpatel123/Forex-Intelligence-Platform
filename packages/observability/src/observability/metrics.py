@@ -5,6 +5,18 @@ from prometheus_client import Counter, Gauge, Histogram
 
 class Metrics:
     adapter_connected = Gauge("adapter_connected", "IC Markets adapter connected")
+    bridge_connected = Gauge("bridge_connected", "Browser bridge heartbeat is fresh")
+    observer_ready = Gauge("observer_ready", "At least one browser observer is ready")
+    browser_outbox_pending = Gauge("browser_outbox_pending", "Browser events awaiting ack")
+    browser_outbox_dropped_total = Gauge(
+        "browser_outbox_dropped_total", "Browser events explicitly dropped"
+    )
+    browser_outbox_retries_total = Gauge(
+        "browser_outbox_retries_total", "Browser delivery retry attempts"
+    )
+    browser_outbox_acknowledged_total = Gauge(
+        "browser_outbox_acknowledged_total", "Browser events acknowledged by collector"
+    )
     adapter_reconnect_total = Counter("adapter_reconnect_total", "Adapter reconnects")
     provider_messages_total = Counter("provider_messages_total", "Provider messages")
     provider_message_bytes_total = Counter("provider_message_bytes_total", "Provider message bytes")

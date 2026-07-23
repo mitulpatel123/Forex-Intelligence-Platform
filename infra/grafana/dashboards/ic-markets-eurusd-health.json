@@ -13,7 +13,10 @@
     {"type":"timeseries","title":"TimescaleDB write latency","id":8,"gridPos":{"h":7,"w":8,"x":16,"y":11},"targets":[{"expr":"histogram_quantile(0.95, rate(timescale_write_latency_seconds_bucket[5m]))","refId":"A"}]},
     {"type":"stat","title":"Reconnect count","id":9,"gridPos":{"h":4,"w":4,"x":0,"y":18},"targets":[{"expr":"adapter_reconnect_total","refId":"A"}]},
     {"type":"timeseries","title":"Process CPU / memory","id":10,"gridPos":{"h":7,"w":10,"x":4,"y":18},"targets":[{"expr":"collector_process_cpu_percent","refId":"A"},{"expr":"collector_process_memory_bytes","refId":"B"}]},
-    {"type":"table","title":"Recent quality event counters","id":11,"gridPos":{"h":7,"w":10,"x":14,"y":18},"targets":[{"expr":"events_by_quality_total","format":"table","instant":true,"refId":"A"}]}
+    {"type":"table","title":"Recent quality event counters","id":11,"gridPos":{"h":7,"w":10,"x":14,"y":18},"targets":[{"expr":"events_by_quality_total","format":"table","instant":true,"refId":"A"}]},
+    {"type":"stat","title":"Browser bridge heartbeat","id":12,"gridPos":{"h":4,"w":4,"x":0,"y":25},"targets":[{"expr":"bridge_connected","refId":"A"}]},
+    {"type":"stat","title":"Observer ready","id":13,"gridPos":{"h":4,"w":4,"x":4,"y":25},"targets":[{"expr":"observer_ready","refId":"A"}]},
+    {"type":"timeseries","title":"Browser outbox","id":14,"gridPos":{"h":7,"w":16,"x":8,"y":25},"targets":[{"expr":"browser_outbox_pending","refId":"A"},{"expr":"browser_outbox_acknowledged_total","refId":"B"},{"expr":"browser_outbox_retries_total","refId":"C"},{"expr":"browser_outbox_dropped_total","refId":"D"}]}
   ],
   "schemaVersion": 40,
   "tags": ["forex", "ic-markets", "eurusd"],
@@ -22,6 +25,5 @@
   "timezone": "browser",
   "title": "IC Markets EUR/USD — Data Pipeline Health",
   "uid": "icm-eurusd-health",
-  "version": 1
+  "version": 2
 }
-

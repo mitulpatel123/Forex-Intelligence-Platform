@@ -97,18 +97,24 @@ class IcMarketsAdapter(Adapter):
 
     def process(self, envelope: ProviderEnvelope) -> AdapterOutput:
         sanitized, redactions = redact(envelope.payload)
+        raw_values: dict[str, Any] = {
+            **({"event_id": envelope.event_id} if envelope.event_id is not None else {}),
+            "adapter_instance_id": self.instance_id,
+            "connection_id": envelope.connection_id,
+            "session_id": envelope.session_id,
+            "instrument": (
+                str(sanitized.get("instrument")) if isinstance(sanitized, dict) else None
+            ),
+            "received_at": envelope.received_at,
+            "payload_content_type": envelope.payload_content_type,
+            "payload": sanitized,
+            "content_hash": canonical_hash(sanitized),
+            "channel_metadata": envelope.channel_metadata,
+            "redaction_status": "SANITIZED" if redactions else "NOT_REQUIRED",
+            "redactions": redactions,
+        }
         raw = RawProviderEvent(
-            adapter_instance_id=self.instance_id,
-            connection_id=envelope.connection_id,
-            session_id=envelope.session_id,
-            instrument=(str(sanitized.get("instrument")) if isinstance(sanitized, dict) else None),
-            received_at=envelope.received_at,
-            payload_content_type=envelope.payload_content_type,
-            payload=sanitized,
-            content_hash=canonical_hash(sanitized),
-            channel_metadata=envelope.channel_metadata,
-            redaction_status="SANITIZED" if redactions else "NOT_REQUIRED",
-            redactions=redactions,
+            **raw_values,
         )
         if len(str(sanitized).encode()) > MAX_PAYLOAD_BYTES:
             return AdapterOutput(
@@ -394,8 +400,12 @@ class IcMarketsAdapter(Adapter):
             )
 
         normalized_at = utc_now()
+        is_visible_dom = sanitized.get("observation_source") == "visible_dom"
         tick = PriceTick.from_quote(
             adapter_instance_id=self.instance_id,
+            source="VISIBLE_DOM" if is_visible_dom else "WEB_TERMINAL",
+            observation_level="DISPLAY_QUOTE" if is_visible_dom else "PROVIDER_TICK",
+            is_provider_tick=not is_visible_dom,
             bid=bid,
             ask=ask,
             is_snapshot=is_snapshot,

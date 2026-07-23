@@ -2,8 +2,10 @@
 
 This repository implements the Milestone 1 live vertical slice for IC Markets
 EUR/USD. An authenticated browser bridge observes only the displayed EURUSD bid/ask,
-then preserves, validates, normalizes, stores, streams, and monitors each quote.
-Nothing here places or modifies trades.
+persists each observation in a bounded retry outbox, and removes it only after the
+collector acknowledges it. The collector validates, normalizes, stores, streams,
+and monitors the display quote. This is explicitly not a claim of provider-native
+tick completeness. Nothing here places or modifies trades.
 
 ## Quick start
 
@@ -33,6 +35,9 @@ make integration-test
 make smoke
 make load-test
 ```
+
+GitHub Actions runs format, lint, type, unit, extension/manifest safety, integration,
+and secret-scan gates on every pull request.
 
 Local services:
 

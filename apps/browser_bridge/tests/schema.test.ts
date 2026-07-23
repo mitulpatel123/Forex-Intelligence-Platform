@@ -56,4 +56,13 @@ describe("bridge validation", () => {
     expect(redactText("Bearer abc.def?token=secret&x=1")).not.toContain("secret");
     expect(redactText("Bearer abc.def?token=secret&x=1")).not.toContain("abc.def");
   });
+
+  it("redacts sensitive JSON fields in supervised discovery frames", () => {
+    const redacted = redactText(
+      '{"account":12345,"sessionId":"session-secret","bid":"1.13743"}',
+    );
+    expect(redacted).not.toContain("12345");
+    expect(redacted).not.toContain("session-secret");
+    expect(redacted).toContain("1.13743");
+  });
 });
