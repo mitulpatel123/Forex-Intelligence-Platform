@@ -67,8 +67,9 @@ Current local results:
 - Smoke: passed
 - Mixed load: 5,000 processed, 0 dropped, all four pairs processed, no starvation
 - Secret scan: passed locally
-- GitHub Actions hardening result: all gates passed on
-  `014113ba607bde983cc9f74f72da969053a1cc8b`
+- GitHub Actions hardening result: all gates passed in run
+  `30049575096` on reviewed implementation head
+  `9bdf96ebe0f86662cbadcca14e6948a5a5e6bea6`
 
 Mixed-load distribution was EURUSD 40%, GBPUSD 25%, USDJPY 20%, AUDUSD 15%.
 It is a deterministic local display-quote pipeline workload, not provider-native
@@ -81,13 +82,62 @@ one intentionally invalid).
 
 ## Live validation
 
-The following soak is historical evidence from the pre-hardening PR head. It is
-not claimed as final validation of the timestamp/lease changes. A new live Chrome
-soak remains pending because the browser-control connection could not be
-established during this implementation run; all automated and integration gates
-above used the hardened code.
+The hardened final live run used the rebuilt extension continuously for 30 minutes
+38 seconds, from `2026-07-23T22:51:34Z` through `2026-07-23T23:22:12Z`.
+The exact reconciliation window used the clean counter baseline captured at
+`2026-07-23T22:52:09Z` and the settled Prometheus/TimescaleDB snapshot at
+`2026-07-23T23:22:29Z`.
 
-The definitive final-build soak ran for 30 minutes 10 seconds, from
+| Pair | Produced | Acknowledged | Unique raw | Normalized | Retries | Drops/rejections/backend drops | Max pending | Max collector depth | Max delivery delay |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| EURUSD | 307 | 307 | 307 | 307 | 6 | 0/0/0 | 1 | 1 | 31.528 s |
+| GBPUSD | 445 | 445 | 445 | 445 | 6 | 0/0/0 | 11 | 1 | 31.532 s |
+| USDJPY | 486 | 486 | 486 | 486 | 6 | 0/0/0 | 1 | 1 | 31.529 s |
+| AUDUSD | 375 | 375 | 375 | 375 | 0 | 0/0/0 | 1 | 1 | 0.111 s |
+
+The extension's durable counters contained pre-baseline rejection history from an
+older loaded build. The table reports deltas from the clean hardened baseline;
+during this final window drops and rejections did not increase. Pending repeatedly
+returned to zero, including after the controlled outage. Backend invalid,
+duplicate, out-of-order, stale-quality, and queue-drop counters remained zero.
+
+The controlled collector outage ran for approximately 20 seconds. EURUSD, GBPUSD,
+and USDJPY each recorded six retry attempts and drained in strict pair FIFO order.
+AUDUSD did not change during the outage and therefore correctly had no queued
+retry. Durable raw/normalized equality, unique IDs, and monotonic observation
+sequences were preserved after restart.
+
+All 1,613 rows in the settled reconciliation snapshot had
+`provider_event_time=null`, provider `sequence=null`,
+`source=VISIBLE_DOM`, `observation_level=DISPLAY_QUOTE`, and
+`is_provider_tick=false`. All local timestamp and delay columns were populated and
+there were no negative delays. Browser-to-collector p50/p95/p99 delays in
+milliseconds were:
+
+| Pair | p50 | p95 | p99 |
+| --- | ---: | ---: | ---: |
+| EURUSD | 6.171 | 45.540 | 57.622 |
+| GBPUSD | 6.208 | 51.127 | 18041.467 |
+| USDJPY | 6.119 | 46.773 | 24876.554 |
+| AUDUSD | 6.106 | 44.209 | 66.748 |
+
+The expected long-tail GBPUSD/USDJPY values came from delayed outbox delivery
+during the controlled collector outage. Normal medians remained close to 6 ms.
+
+The two-window active-source test held two eligible sources for every pair beyond
+the lease timeout while one source remained active. In a sampled interval,
+active normalized increments and standby-suppressed increments matched exactly:
+EURUSD 6/6, GBPUSD 6/6, USDJPY 7/7, and AUDUSD 4/4. Closing the confirmed active
+window transferred all four leases to the standby tab. In the first post-failover
+sample the new active document stored 28/59/13/29 unique raw and normalized rows
+for EURUSD/GBPUSD/USDJPY/AUDUSD respectively, with zero provenance, duplicate, or
+ordering violations. Observation sequence continued from the values already
+assigned while that document was standby; it remained strictly increasing.
+
+The following earlier soak is retained only as historical evidence from the
+pre-hardening PR head.
+
+The earlier pre-hardening soak ran for 30 minutes 10 seconds, from
 `2026-07-23T20:36:50Z` through `2026-07-23T21:07:00Z`. All values below are deltas
 from the captured soak baseline, so the 879 legacy Milestone 1 outbox records purged
 before the soak are excluded.
