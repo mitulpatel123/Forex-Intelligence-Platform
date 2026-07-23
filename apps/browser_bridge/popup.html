@@ -1,9 +1,27 @@
 <!doctype html>
 <html lang="en">
-  <head><meta charset="utf-8"><title>Bridge status</title></head>
+  <head>
+    <meta charset="utf-8">
+    <title>Bridge status</title>
+    <style>
+      body { font: 13px system-ui, sans-serif; min-width: 230px; }
+      dl { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; }
+      dt, dd { margin: 0; }
+      dd { font-variant-numeric: tabular-nums; }
+    </style>
+  </head>
   <body>
-    <strong>IC Markets discovery bridge</strong>
+    <strong>IC Markets EURUSD bridge</strong>
     <p id="status">checking…</p>
+    <dl>
+      <dt>Pending</dt><dd id="pending">0</dd>
+      <dt>Produced</dt><dd id="produced">0</dd>
+      <dt>Acknowledged</dt><dd id="acknowledged">0</dd>
+      <dt>Retries</dt><dd id="retries">0</dd>
+      <dt>Dropped</dt><dd id="dropped">0</dd>
+      <dt>Rejected</dt><dd id="rejected">0</dd>
+      <dt>Discovery mode</dt><dd id="discoveryMode">OFF</dd>
+    </dl>
     <script src="dist/popup.js"></script>
   </body>
 </html>

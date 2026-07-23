@@ -69,17 +69,29 @@ class PostgresStorage:
             )
             await connection.commit()
 
+    async def has_raw(self, event_id: str) -> bool:
+        async with self.pool.connection() as connection:
+            row = await (
+                await connection.execute(
+                    "SELECT 1 FROM raw_provider_events WHERE raw_event_id = %s LIMIT 1",
+                    (event_id,),
+                )
+            ).fetchone()
+            return row is not None
+
     async def store_tick(self, event: PriceTick) -> None:
         async with self.pool.connection() as connection:
             await connection.execute(
                 """
                 INSERT INTO price_ticks (
                   event_id, schema_version, provider, adapter_instance, instrument,
+                  source, observation_level, is_provider_tick,
                   bid, ask, mid, spread, spread_pips, pip_size, provider_event_time,
                   received_time, normalized_time, sequence, snapshot, changed_fields,
                   quality_status, quality_flags, raw_event_id, trace_id
                 ) VALUES (
                   %(event_id)s, %(schema_version)s, %(provider)s, %(adapter)s, %(instrument)s,
+                  %(source)s, %(observation_level)s, %(is_provider_tick)s,
                   %(bid)s, %(ask)s, %(mid)s, %(spread)s, %(spread_pips)s, %(pip_size)s,
                   %(provider_time)s, %(received)s, %(normalized)s, %(sequence)s, %(snapshot)s,
                   %(changed)s, %(quality_status)s, %(quality_flags)s, %(raw_event_id)s,
@@ -92,6 +104,9 @@ class PostgresStorage:
                     "provider": event.provider,
                     "adapter": event.adapter_instance_id,
                     "instrument": event.instrument,
+                    "source": event.source,
+                    "observation_level": event.observation_level,
+                    "is_provider_tick": event.is_provider_tick,
                     "bid": event.bid,
                     "ask": event.ask,
                     "mid": event.mid,

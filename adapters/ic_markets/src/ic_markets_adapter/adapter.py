@@ -97,18 +97,24 @@ class IcMarketsAdapter(Adapter):
 
     def process(self, envelope: ProviderEnvelope) -> AdapterOutput:
         sanitized, redactions = redact(envelope.payload)
+        raw_values: dict[str, Any] = {
+            **({"event_id": envelope.event_id} if envelope.event_id is not None else {}),
+            "adapter_instance_id": self.instance_id,
+            "connection_id": envelope.connection_id,
+            "session_id": envelope.session_id,
+            "instrument": (
+                str(sanitized.get("instrument")) if isinstance(sanitized, dict) else None
+            ),
+            "received_at": envelope.received_at,
+            "payload_content_type": envelope.payload_content_type,
+            "payload": sanitized,
+            "content_hash": canonical_hash(sanitized),
+            "channel_metadata": envelope.channel_metadata,
+            "redaction_status": "SANITIZED" if redactions else "NOT_REQUIRED",
+            "redactions": redactions,
+        }
         raw = RawProviderEvent(
-            adapter_instance_id=self.instance_id,
-            connection_id=envelope.connection_id,
-            session_id=envelope.session_id,
-            instrument=(str(sanitized.get("instrument")) if isinstance(sanitized, dict) else None),
-            received_at=envelope.received_at,
-            payload_content_type=envelope.payload_content_type,
-            payload=sanitized,
-            content_hash=canonical_hash(sanitized),
-            channel_metadata=envelope.channel_metadata,
-            redaction_status="SANITIZED" if redactions else "NOT_REQUIRED",
-            redactions=redactions,
+            **raw_values,
         )
         if len(str(sanitized).encode()) > MAX_PAYLOAD_BYTES:
             return AdapterOutput(
@@ -145,8 +151,9 @@ class IcMarketsAdapter(Adapter):
                 ],
             )
 
-        provider_time = self._parse_time(sanitized.get("provider_event_time"))
-        if provider_time is None:
+        provider_time_value = sanitized.get("provider_event_time")
+        provider_time = self._parse_time(provider_time_value)
+        if provider_time_value is not None and provider_time is None:
             return AdapterOutput(
                 raw_event=raw,
                 quality_events=[
@@ -155,12 +162,15 @@ class IcMarketsAdapter(Adapter):
                         "TIME_PARSE_UTC",
                         QualityStatus.UNPARSEABLE,
                         "timezone-aware provider_event_time",
-                        observed=str(sanitized.get("provider_event_time")),
+                        observed=str(provider_time_value),
                     )
                 ],
             )
         raw.provider_event_time = provider_time
-        if provider_time > envelope.received_at + self.max_future_skew:
+        if (
+            provider_time is not None
+            and provider_time > envelope.received_at + self.max_future_skew
+        ):
             return AdapterOutput(
                 raw_event=raw,
                 quality_events=[
@@ -272,13 +282,17 @@ class IcMarketsAdapter(Adapter):
                 ],
             )
 
+        event_order_time = provider_time or envelope.received_at
         dedup = canonical_hash(
             {
                 "provider": "IC_MARKETS",
                 "connection_id": envelope.connection_id,
                 "session_id": envelope.session_id,
                 "instrument": "EURUSD",
-                "provider_event_time": provider_time.isoformat(),
+                "event_order_time": event_order_time.isoformat(),
+                "timestamp_basis": "provider"
+                if provider_time is not None
+                else "browser_observation",
                 "bid": str(bid),
                 "ask": str(ask),
                 "sequence": sequence,
@@ -302,6 +316,19 @@ class IcMarketsAdapter(Adapter):
         flags: list[str] = []
         status = QualityStatus.GOOD
         qualities: list[DataQualityEvent] = []
+        if provider_time is None:
+            flags.append("PROVIDER_TIMESTAMP_UNAVAILABLE")
+            status = QualityStatus.WARNING
+            qualities.append(
+                self._quality(
+                    raw,
+                    "TIME_PROVIDER_UNAVAILABLE",
+                    QualityStatus.WARNING,
+                    "provider timestamp present; browser observation time used for ordering",
+                    action="tick_published_with_warning",
+                    severity="WARNING",
+                )
+            )
         if previous is not None:
             if (
                 sequence is not None
@@ -326,7 +353,7 @@ class IcMarketsAdapter(Adapter):
                         )
                     ],
                 )
-            if provider_time < previous.provider_event_time:
+            if event_order_time < previous.provider_event_time:
                 return AdapterOutput(
                     raw_event=raw,
                     quality_events=[
@@ -373,8 +400,12 @@ class IcMarketsAdapter(Adapter):
             )
 
         normalized_at = utc_now()
+        is_visible_dom = sanitized.get("observation_source") == "visible_dom"
         tick = PriceTick.from_quote(
             adapter_instance_id=self.instance_id,
+            source="VISIBLE_DOM" if is_visible_dom else "WEB_TERMINAL",
+            observation_level="DISPLAY_QUOTE" if is_visible_dom else "PROVIDER_TICK",
+            is_provider_tick=not is_visible_dom,
             bid=bid,
             ask=ask,
             is_snapshot=is_snapshot,
@@ -390,5 +421,11 @@ class IcMarketsAdapter(Adapter):
             trace_id=raw.trace_id,
         )
         self._seen.add(dedup)
-        self._state[key] = QuoteState(bid, ask, envelope.received_at, provider_time, sequence)
+        self._state[key] = QuoteState(
+            bid,
+            ask,
+            envelope.received_at,
+            event_order_time,
+            sequence,
+        )
         return AdapterOutput(raw_event=raw, tick=tick, quality_events=qualities)

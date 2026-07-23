@@ -2,134 +2,141 @@
 
 ## Result
 
-**MILESTONE 1 REPLAY VERTICAL SLICE PASSED — LIVE PROVIDER DISCOVERY BLOCKED**
+**MILESTONE 1 LIVE DISPLAY-QUOTE PROTOTYPE PASSED — PR HARDENING IMPLEMENTED**
 
 Repository: `/Users/mitulpatel/Test Extension/forex-intelligence-platform`
 
-## Environment and installation
+## Live provider evidence
 
-The existing Apple Silicon Mac, Homebrew, `uv`, Chrome, and Docker Desktop were
-reused. Docker Desktop was started and verified. Homebrew Node 22.23.1 was installed
-and linked because the existing Node 25.2.1 was not the active LTS. Gitleaks 8.30.1
-was installed for the required local secret scan. Python 3.12.11 was resolved by
-`uv`. Exact application and container versions are in `DEPENDENCIES.md`.
+On 2026-07-23 an authenticated IC Markets MT5-3 terminal displayed live EURUSD
+quotes and the extension reported `receiving`. Discovery established this path:
 
-## Discovery conclusion
+```text
+IC Markets wrapper
+  -> cross-origin MetaTrader 5 terminal
+  -> wss://<terminal-host>/terminal (binary ArrayBuffer provider codec)
+  -> visible EURUSD Market Watch bid/ask
+  -> narrow MV3 observer
+  -> authenticated 127.0.0.1 collector
+```
 
-The public entry page was inspected without authentication. It is a CloudFront/S3
-served “MetaTrader WebTrader” wrapper that dynamically creates a cross-origin MT4
-or MT5 iframe after version/server selection. The wrapper publicly lists six global
-MT5 frame hosts. Its captured public HTML hash was
-`74451c722239adfc5b7e333732b8165ef5caba53f168fd5e9bbc62522b3f6b39`.
+The project does not reverse engineer the binary codec or capture broad binary
+traffic. It reads only the visible EURUSD symbol, bid, and ask, never interacts
+with order controls, and never reads account/session fields.
 
-The controlled browser failed during initialization before interactive inspection.
-No authenticated EUR/USD message, network subscription, WebSocket schema, DOM
-quote, full/partial semantics, timestamp, sequence, or visible-value comparison was
-captured. Live status is therefore `BLOCKED_BY_PROVIDER_DISCOVERY`. No endpoint,
-symbol ID, selector, or provider schema was fabricated.
+This is a rendered `DISPLAY_QUOTE`, not a provider-native tick. It does not prove
+that every wire update was displayed, preserve provider precision, or support an
+HFT-quality completeness claim.
+
+The rendered row exposes no provider timestamp or sequence. Live observations are
+full snapshots with `provider_event_time=null`, `sequence=null`, and explicit
+`PROVIDER_TIMESTAMP_UNAVAILABLE` warning status. No timestamp is invented.
+
+## Validated live vertical slice
+
+During the validation window:
+
+- the extension popup reported `receiving`;
+- collector liveness was `UP` and readiness was `READY`;
+- Redis and TimescaleDB were `UP`, migrations were `CURRENT`;
+- live raw events and normalized ticks increased continuously;
+- Redis `latest:quote:IC_MARKETS:EURUSD` contained the current v0.1 `PRICE_TICK`;
+- TimescaleDB stored raw observations, normalized ticks, and quality warnings;
+- the feed reported `HEALTHY`;
+- Prometheus reported the collector target `up`;
+- Grafana reported database status `ok`;
+- invalid, duplicate, out-of-order, and stale counters were all zero.
+
+One validated live sample was bid `1.13743`, ask `1.13744`, mid `1.137435`,
+spread `0.00001`, and spread `0.1` pips. The browser-visible quote continued to
+change after this sample. A reviewed market-data-only fixture is committed at
+`adapters/ic_markets/fixtures/live_visible_dom.jsonl`.
+
+## PR-hardening live soak
+
+A 15-minute authenticated soak ran from `2026-07-23T18:48:10Z` through
+`2026-07-23T19:03:11Z` against the hardened extension and local collector:
+
+| Measure | Result |
+| --- | ---: |
+| DOM observations produced | 669 |
+| Collector acknowledgements | 669 |
+| Accepted unique backend raw events | 669 |
+| Normalized rows | 669 |
+| Outbox retries | 0 |
+| Browser-side drops / rejections | 0 / 0 |
+| Backend drops | 0 |
+| Zero-spread display occurrences | 239 |
+| Maximum observed processing delay | 144.640 ms |
+| Extension reconnects | 0 |
+
+The required delivery invariant held exactly: 669 acknowledged browser events
+equaled 669 unique accepted raw events, with no rejected observations. All 669
+normalized rows had `VISIBLE_DOM` / `DISPLAY_QUOTE` / `is_provider_tick=false`
+provenance. Pending returned to zero throughout sampled heartbeats.
+
+Equal displayed bid and ask values were manually verified in two distinct cells of
+the exact EURUSD Market Watch row; they were not the same value selected twice.
+The bridge stayed connected and observer-ready. Feed freshness was healthy while
+the displayed quote changed and correctly became stale during a final 6.7-second
+no-change interval without misreporting the browser bridge as disconnected.
+
+After the measured window, a controlled collector restart exercised recovery on
+the final patched backend: three delivery retries were retained and acknowledged,
+pending returned to zero, and no event was dropped or rejected.
 
 ## What was built
 
 - Pydantic v0.1 contracts and JSON Schema snapshots for raw, price, quality,
   adapter-status, and feed-health events.
-- Decimal-safe EUR/USD normalization and deterministic rules for snapshots,
-  partials, stale/reconnect state, numeric validity, skew, duplicates, ordering,
-  extreme jump, and extreme spread.
-- Immutable raw-first processing with SHA-256 and trace linkage.
-- Redis Streams, consumer groups, current quote, retries/dead-letter support, and
-  bounded stream trimming.
-- TimescaleDB migrations, hypertables, indexes, and idempotent writes.
-- Authenticated loopback collector with a 10,000-item bounded queue, 250 ms overflow
-  policy, drain-on-shutdown, heartbeat, readiness/liveness/components, and metrics.
-- Provisioned Prometheus and Grafana dashboard.
-- Replay modes `max`, `realtime`, `step`, and `xN`, plus test reset.
-- A narrow MV3 discovery extension injected into only evidenced wrapper/global MT5
-  origins. It preserves WebSocket behavior through a constructor proxy, filters
-  text EUR/USD candidates, caps payloads at 256 KiB, redacts token patterns, and
-  stores raw discovery frames through authenticated localhost.
-- The committed fixture is explicitly labeled
-  `SIMULATED_BRIDGE_CONTRACT_NOT_PROVIDER_CAPTURE`.
-
-## Commands run and evidence
-
-```text
-make format                 PASS
-make lint                   PASS
-make typecheck              PASS (Pyright 0 errors; TypeScript strict 0 errors)
-make test                   PASS (22 Python + 7 extension tests)
-make integration-test       PASS (1 real Redis/TimescaleDB integration test)
-make secret-scan            PASS (357.77 KB scanned; no leaks)
-make smoke                  PASS
-make load-test              PASS
-```
-
-Smoke replay result:
-
-```json
-{"duplicates":0,"elapsed_seconds":0.035432,"invalid_events":1,"out_of_order_events":0,"total_raw_events":4,"valid_ticks":3}
-```
-
-The smoke test also verified collector readiness/liveness, metrics, Redis current
-state and streams, raw/tick SQL rows, Prometheus target `UP`, Grafana health, and the
-auto-provisioned dashboard UID `icm-eurusd-health`.
-
-Load result (in-process validation path, not an HFT claim):
-
-```json
-{"actual_elapsed_seconds":5.0001,"dropped_count":0,"duration_seconds":5,"input_rate":1000,"max_queue_depth":0,"p50_latency_ms":0.1787,"p95_latency_ms":0.4248,"p99_latency_ms":1.1289,"peak_memory_bytes":59113472,"processed_count":5000}
-```
-
-Actual replay-produced sample:
-
-```json
-{
-  "event_type": "PRICE_TICK",
-  "schema_version": "0.1",
-  "provider": "IC_MARKETS",
-  "instrument": "EURUSD",
-  "bid": "1.08543",
-  "ask": "1.08546",
-  "mid": "1.085445",
-  "spread": "0.00003",
-  "spread_pips": "0.3",
-  "pip_size": "0.0001",
-  "is_snapshot": false,
-  "changed_fields": ["ask"],
-  "sequence": 3,
-  "quality_status": "GOOD"
-}
-```
-
-This is replay evidence from the simulated bridge-contract fixture, not live market
-data.
+- Decimal-safe EURUSD normalization and deterministic rules for snapshots,
+  partials, invalid values, duplicates, stale state, ordering, jumps, and spreads.
+- Immutable raw-first storage with SHA-256 and trace linkage.
+- Redis Streams, current quote, consumer groups, retry/dead-letter support, and
+  bounded trimming.
+- TimescaleDB hypertables, indexes, and idempotent writes.
+- Authenticated loopback collector with a bounded queue, backpressure, shutdown
+  drain, health endpoints, heartbeat, and Prometheus metrics.
+- Provisioned Prometheus and Grafana health dashboard.
+- Replay modes `max`, `realtime`, `step`, and `xN`.
+- Narrow MV3 browser bridge with exact origin allowlists, iframe injection,
+  targeted header-mapped row acquisition, per-document identity, heartbeat,
+  persistent bounded retry outbox, acknowledgement counters, and the
+  evidence-backed visible EURUSD quote path.
+- WebSocket discovery disabled by default, explicit supervised enablement,
+  client/server redaction, and no last-frame persistence.
+- GitHub Actions for format, lint, types, Python/extension tests, manifest safety,
+  real Redis/TimescaleDB integration, and secret scanning.
+- Simulated fixtures for edge-case behavior plus a sanitized live visible-DOM
+  fixture for the observed collection contract.
 
 ## Security review
 
-Loopback binding, exact extension origins, no `<all_urls>`, local code only, no
-trade interactions, size/origin/schema validation, recursive redaction, 0600 random
-bridge token, ignored captures/secrets, and Gitleaks were verified. The local
-Grafana development password must be changed for any non-local use. No provider
-credential, cookie, token, account number, balance, or personal data was collected.
+All host services bind to loopback. Extension permissions are allowlisted and do
+not use `<all_urls>`. The bridge token is random, ignored, stored mode `0600`, and
+was rotated before live validation. No password, MFA code, cookie, browser token,
+account identifier, balance, profile, or order-entry value was captured. No Buy,
+Sell, Close, Modify, Cancel, or New Order control was used.
 
-## Limitations and blocker
+## Known limitations
 
-- Real quote delivery and provider schema remain unknown.
-- Binary/compressed frames and symbol aliases may bypass the current text candidate
-  filter; discovery must determine the narrowest safe observer change.
-- The bridge service worker uses a generic browser session label until real
-  connection/session semantics are discovered.
-- The replay fixture proves platform behavior, not exact provider-to-contract
-  normalization.
-- UUID4 is used because the standard library/runtime selection does not expose UUIDv7.
-- Prometheus reports the collector down whenever the host collector is stopped; this
-  is correct behavior.
+- Provider wire-level timestamps, sequence, heartbeat, and full/partial semantics
+  remain unavailable behind the binary terminal codec.
+- The visible DOM path depends on the terminal continuing to expose an EURUSD row
+  with exact Symbol, Bid, and Ask columns.
+- Every live tick carries a timestamp-availability warning by design.
+- The local Grafana development password must be changed outside local development.
+- UUID4 remains in use because the selected standard runtime does not expose UUIDv7.
 
-## Recommended Milestone 2
+## Milestone conclusion
 
-Keep scope restricted to finishing provider discovery: have the user manually load
-the extension, log in/MFA, select one MT5 server and EUR/USD, capture a short ignored
-sample, sanitize it, compare decoded bid/ask with the visible quote, document socket,
-heartbeat, reconnect, subscription, timestamp/sequence, and snapshot/partial
-semantics, then replace only the provisional bridge mapping with an exact
-fixture-backed live adapter. Do not add strategies, trading, news, indicators, or
-additional instruments until that live slice passes.
+The repository now proves the smallest trustworthy real-data path requested by
+Milestone 1: authenticated IC Markets EURUSD display, evidence-based collection,
+raw preservation, deterministic normalization, Redis live state/streams,
+TimescaleDB history, replay, tests, and parallel health monitoring. Trading
+functionality and all out-of-scope data sources remain intentionally absent.
+
+The event contract explicitly records `source=VISIBLE_DOM`,
+`observation_level=DISPLAY_QUOTE`, and `is_provider_tick=false`. Browser delivery
+uses an acknowledged, idempotent outbox; browser connection and feed freshness are
+independent health signals.

@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class ProviderEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    event_id: str | None = None
     connection_id: str
     session_id: str
     received_at: datetime

@@ -20,6 +20,28 @@ describe("bridge validation", () => {
     expect(isCapturedFrame(frame, allowedOrigin)).toBe(true);
   });
 
+  it("accepts a bounded UTF-8 decoded binary frame", () => {
+    expect(
+      isCapturedFrame(
+        { ...frame, frameType: "websocket-binary-utf8" },
+        allowedOrigin,
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts a visible EUR/USD quote frame", () => {
+    expect(
+      isCapturedFrame(
+        {
+          ...frame,
+          frameType: "dom-visible-quote",
+          payload: '{"instrument":"EURUSD","bid":"1.08542","ask":"1.08544"}',
+        },
+        allowedOrigin,
+      ),
+    ).toBe(true);
+  });
+
   it("rejects the wrong origin", () => {
     expect(isCapturedFrame(frame, "https://evil.example")).toBe(false);
   });
@@ -33,5 +55,14 @@ describe("bridge validation", () => {
   it("redacts bearer and query tokens", () => {
     expect(redactText("Bearer abc.def?token=secret&x=1")).not.toContain("secret");
     expect(redactText("Bearer abc.def?token=secret&x=1")).not.toContain("abc.def");
+  });
+
+  it("redacts sensitive JSON fields in supervised discovery frames", () => {
+    const redacted = redactText(
+      '{"account":12345,"sessionId":"session-secret","bid":"1.13743"}',
+    );
+    expect(redacted).not.toContain("12345");
+    expect(redacted).not.toContain("session-secret");
+    expect(redacted).toContain("1.13743");
   });
 });
