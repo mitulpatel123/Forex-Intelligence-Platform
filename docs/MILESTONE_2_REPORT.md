@@ -57,7 +57,7 @@ Current local results:
 - Real Redis/TimescaleDB integration/replay: 3 passed
 - Smoke: passed
 - Mixed load: 5,000 processed, 0 dropped, all four pairs processed, no starvation
-- CI: pending draft PR
+- GitHub Actions quality job: passed on `b1f5159601d1fbe1bd8e0209c1a5cc1bd0380594`
 
 Mixed-load distribution was EURUSD 40%, GBPUSD 25%, USDJPY 20%, AUDUSD 15%.
 It is a deterministic local display-quote pipeline workload, not provider-native
@@ -70,14 +70,41 @@ one intentionally invalid).
 
 ## Live validation
 
-Live 30-minute soak: pending.
+The definitive final-build soak ran for 30 minutes 10 seconds, from
+`2026-07-23T20:36:50Z` through `2026-07-23T21:07:00Z`. All values below are deltas
+from the captured soak baseline, so the 879 legacy Milestone 1 outbox records purged
+before the soak are excluded.
 
-Collector restart recovery: pending.
+| Pair | Produced | Acknowledged | Unique raw | Normalized | Retries | Drops/rejections/backend drops | Max pending | Max collector depth | Max delivery delay |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| EURUSD | 361 | 361 | 361 | 361 | 6 | 0/0/0 | 17 | 1 | 31.533 s |
+| GBPUSD | 523 | 523 | 523 | 523 | 6 | 0/0/0 | 13 | 1 | 31.537 s |
+| USDJPY | 408 | 408 | 408 | 408 | 6 | 0/0/0 | 5 | 0 | 31.536 s |
+| AUDUSD | 334 | 334 | 334 | 334 | 6 | 0/0/0 | 6 | 1 | 31.539 s |
 
-Pair isolation: pending.
+Pending settled to zero. Durable tick IDs had zero duplicates. Backend invalid,
+duplicate, out-of-order, stale-quality, and queue-drop counters were zero for every
+pair. Every normalized row carried the expected provider-timestamp-unavailable
+warning; rollover spread/jump warnings were non-dropping quality warnings.
 
-No live success will be claimed until those checks are completed. Fixture-based
-ambiguity isolation already passes without manipulating the authenticated page.
+The 30-second monitor sampled 9/8/13/11 contiguous observer-stale intervals for
+EURUSD/GBPUSD/USDJPY/AUDUSD respectively, plus one controlled AUDUSD missing
+interval. Ambiguous intervals were zero. Most of the longer all-pair stale samples
+occurred during the 21:00Z broker rollover pause; the health model stayed degraded
+instead of falsely claiming fresh quotes, and sporadic pair updates recovered
+independently.
+
+During the soak the collector was stopped. The monitor captured 31 pending at one
+heartbeat; Prometheus captured per-pair maxima of 17/13/5/6. After restart, strict
+pair-head FIFO drained the backlog, each pair recorded six retries, pending returned
+to zero by the next monitor sample, and raw-to-normalized reconciliation remained
+exact with no durable duplicates or out-of-order suppressions.
+
+For pair isolation, AUDUSD was temporarily marked hidden in the rendered DOM.
+AUDUSD alone became `MISSING`; the other three acknowledgement counters continued
+advancing. Removing the marker reacquired AUDUSD and returned it to `READY`.
+Fixture-based conflicting-duplicate ambiguity isolation also passed without
+dangerous terminal manipulation.
 
 ## Security
 
@@ -87,7 +114,7 @@ capture reads only exact visible quote cells. Discovery remains supervised, boun
 double-redacted, and OFF by default.
 
 No trading or account controls were accessed during implementation or automated
-validation.
+or live validation.
 
 ## Limitations and recommended Milestone 3
 
