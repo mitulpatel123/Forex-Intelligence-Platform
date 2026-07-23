@@ -89,6 +89,7 @@ jobs:
       - name: End-to-end smoke test
         env:
           FIP_SMOKE_REUSE_DATA_SERVICES: "true"
+          FIP_BIND_HOST: "0.0.0.0"
         run: make smoke
 
       - name: Bounded four-pair load test
