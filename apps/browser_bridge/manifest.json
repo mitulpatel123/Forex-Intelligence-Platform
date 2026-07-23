@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "Forex Intelligence — IC Markets Discovery Bridge",
+  "version": "0.1.0",
+  "description": "Captures narrowly filtered EUR/USD discovery evidence; never interacts with trades.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://webtrader-sc.ic.com/*",
+    "https://mt5web.icmarkets.com/*",
+    "https://mt502web.icmarkets.com/*",
+    "https://mt503web.icmarkets.com/*",
+    "https://mt504web.icmarkets.com/*",
+    "https://mt506web.icmarkets.com/*",
+    "https://mt5demo.icmarkets.com/*",
+    "http://127.0.0.1:8001/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://webtrader-sc.ic.com/*",
+        "https://mt5web.icmarkets.com/*",
+        "https://mt502web.icmarkets.com/*",
+        "https://mt503web.icmarkets.com/*",
+        "https://mt504web.icmarkets.com/*",
+        "https://mt506web.icmarkets.com/*",
+        "https://mt5demo.icmarkets.com/*"
+      ],
+      "js": ["dist/page-observer.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://webtrader-sc.ic.com/*",
+        "https://mt5web.icmarkets.com/*",
+        "https://mt502web.icmarkets.com/*",
+        "https://mt503web.icmarkets.com/*",
+        "https://mt504web.icmarkets.com/*",
+        "https://mt506web.icmarkets.com/*",
+        "https://mt5demo.icmarkets.com/*"
+      ],
+      "js": ["dist/content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "background": {
+    "service_worker": "dist/service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "IC Markets discovery bridge"
+  },
+  "options_page": "options.html"
+}

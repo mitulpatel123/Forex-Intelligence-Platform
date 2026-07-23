@@ -1,0 +1,8 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:forex-intelligence:ADAPTER_STATUS:0.1",
+  "type":"object","additionalProperties":false,
+  "required":["event_id","schema_version","event_type","adapter_name","instance_id","state","connection_count","reconnect_count","summary","timestamp"],
+  "properties":{"schema_version":{"const":"0.1"},"event_type":{"const":"ADAPTER_STATUS"},"adapter_name":{"const":"ic_markets"},"event_id":{"type":"string"},"instance_id":{"type":"string"},"state":{"enum":["INITIALIZING","CONNECTED","DEGRADED","DISCONNECTED","BLOCKED_BY_PROVIDER_DISCOVERY"]},"connection_count":{"type":"integer","minimum":0},"reconnect_count":{"type":"integer","minimum":0},"last_message_time":{"type":["string","null"],"format":"date-time"},"last_valid_tick_time":{"type":["string","null"],"format":"date-time"},"error_code":{"type":["string","null"]},"summary":{"type":"string"},"timestamp":{"type":"string","format":"date-time"}}
+}
+

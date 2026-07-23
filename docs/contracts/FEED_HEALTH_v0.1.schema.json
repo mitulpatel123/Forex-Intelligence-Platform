@@ -1,0 +1,8 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:forex-intelligence:FEED_HEALTH:0.1",
+  "type":"object","additionalProperties":false,
+  "required":["event_id","schema_version","event_type","provider","instrument","event_rate","last_event_age","invalid_ratio","duplicate_ratio","out_of_order_ratio","p50_ingest_latency","p95_ingest_latency","p99_ingest_latency","queue_lag","storage_lag","status","timestamp"],
+  "properties":{"schema_version":{"const":"0.1"},"event_type":{"const":"FEED_HEALTH"},"provider":{"const":"IC_MARKETS"},"instrument":{"const":"EURUSD"},"event_id":{"type":"string"},"event_rate":{"type":"number","minimum":0},"last_event_age":{"type":"number","minimum":0},"invalid_ratio":{"type":"number","minimum":0,"maximum":1},"duplicate_ratio":{"type":"number","minimum":0,"maximum":1},"out_of_order_ratio":{"type":"number","minimum":0,"maximum":1},"p50_ingest_latency":{"type":"number","minimum":0},"p95_ingest_latency":{"type":"number","minimum":0},"p99_ingest_latency":{"type":"number","minimum":0},"queue_lag":{"type":"integer","minimum":0},"storage_lag":{"type":"integer","minimum":0},"status":{"enum":["HEALTHY","DEGRADED","STALE","BLOCKED"]},"timestamp":{"type":"string","format":"date-time"}}
+}
+

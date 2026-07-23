@@ -1,0 +1,20 @@
+{
+  "name": "forex-intelligence-platform",
+  "private": true,
+  "packageManager": "pnpm@10.15.1",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "scripts": {
+    "extension:build": "tsc --noEmit -p apps/browser_bridge/tsconfig.json && esbuild apps/browser_bridge/src/page-observer.ts apps/browser_bridge/src/content.ts apps/browser_bridge/src/service-worker.ts apps/browser_bridge/src/options.ts apps/browser_bridge/src/popup.ts --bundle --format=iife --platform=browser --outdir=apps/browser_bridge/dist",
+    "extension:test": "vitest run",
+    "extension:typecheck": "tsc --noEmit -p apps/browser_bridge/tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/chrome": "0.0.326",
+    "@types/node": "22.13.10",
+    "esbuild": "0.25.5",
+    "typescript": "5.8.3",
+    "vitest": "3.2.4"
+  }
+}

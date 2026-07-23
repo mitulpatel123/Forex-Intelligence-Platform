@@ -1,0 +1,8 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:forex-intelligence:DATA_QUALITY_EVENT:0.1",
+  "type":"object","additionalProperties":false,
+  "required":["event_id","schema_version","event_type","related_event_id","provider","instrument","severity","rule_id","classification","expected_condition","action_taken","details","timestamp","trace_id"],
+  "properties":{"schema_version":{"const":"0.1"},"event_type":{"const":"DATA_QUALITY_EVENT"},"provider":{"const":"IC_MARKETS"},"event_id":{"type":"string"},"related_event_id":{"type":"string"},"instrument":{"type":"string"},"severity":{"enum":["INFO","WARNING","ERROR"]},"rule_id":{"type":"string"},"classification":{"enum":["GOOD","WARNING","BAD","DUPLICATE","LATE","OUT_OF_ORDER","STALE","UNPARSEABLE"]},"observed_value":{"type":["string","null"]},"expected_condition":{"type":"string"},"action_taken":{"type":"string"},"details":{"type":"object"},"timestamp":{"type":"string","format":"date-time"},"trace_id":{"type":"string"}}
+}
+

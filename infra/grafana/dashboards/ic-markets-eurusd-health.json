@@ -1,0 +1,27 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "graphTooltip": 1,
+  "panels": [
+    {"type":"stat","title":"Adapter connection","id":1,"gridPos":{"h":4,"w":4,"x":0,"y":0},"targets":[{"expr":"adapter_connected","refId":"A"}]},
+    {"type":"stat","title":"Last valid tick age","id":2,"gridPos":{"h":4,"w":4,"x":4,"y":0},"targets":[{"expr":"last_valid_tick_age_seconds","refId":"A"}]},
+    {"type":"timeseries","title":"Ticks / second","id":3,"gridPos":{"h":7,"w":8,"x":0,"y":4},"targets":[{"expr":"rate(normalized_ticks_total[1m])","refId":"A"}]},
+    {"type":"timeseries","title":"Raw messages / second","id":4,"gridPos":{"h":7,"w":8,"x":8,"y":4},"targets":[{"expr":"rate(provider_messages_total[1m])","refId":"A"}]},
+    {"type":"timeseries","title":"Ingest latency p50/p95/p99","id":5,"gridPos":{"h":7,"w":8,"x":16,"y":4},"targets":[{"expr":"histogram_quantile(0.50, rate(ingest_latency_seconds_bucket[5m]))","refId":"A"},{"expr":"histogram_quantile(0.95, rate(ingest_latency_seconds_bucket[5m]))","refId":"B"},{"expr":"histogram_quantile(0.99, rate(ingest_latency_seconds_bucket[5m]))","refId":"C"}]},
+    {"type":"timeseries","title":"Quality rates","id":6,"gridPos":{"h":7,"w":8,"x":0,"y":11},"targets":[{"expr":"rate(invalid_events_total[1m])","refId":"A"},{"expr":"rate(duplicate_events_total[1m])","refId":"B"},{"expr":"rate(out_of_order_events_total[1m])","refId":"C"}]},
+    {"type":"timeseries","title":"Redis consumer lag / queue","id":7,"gridPos":{"h":7,"w":8,"x":8,"y":11},"targets":[{"expr":"event_bus_consumer_lag","refId":"A"},{"expr":"collector_queue_depth","refId":"B"}]},
+    {"type":"timeseries","title":"TimescaleDB write latency","id":8,"gridPos":{"h":7,"w":8,"x":16,"y":11},"targets":[{"expr":"histogram_quantile(0.95, rate(timescale_write_latency_seconds_bucket[5m]))","refId":"A"}]},
+    {"type":"stat","title":"Reconnect count","id":9,"gridPos":{"h":4,"w":4,"x":0,"y":18},"targets":[{"expr":"adapter_reconnect_total","refId":"A"}]},
+    {"type":"timeseries","title":"Process CPU / memory","id":10,"gridPos":{"h":7,"w":10,"x":4,"y":18},"targets":[{"expr":"collector_process_cpu_percent","refId":"A"},{"expr":"collector_process_memory_bytes","refId":"B"}]},
+    {"type":"table","title":"Recent quality event counters","id":11,"gridPos":{"h":7,"w":10,"x":14,"y":18},"targets":[{"expr":"events_by_quality_total","format":"table","instant":true,"refId":"A"}]}
+  ],
+  "schemaVersion": 40,
+  "tags": ["forex", "ic-markets", "eurusd"],
+  "templating": {"list": []},
+  "time": {"from": "now-15m", "to": "now"},
+  "timezone": "browser",
+  "title": "IC Markets EUR/USD — Data Pipeline Health",
+  "uid": "icm-eurusd-health",
+  "version": 1
+}
+

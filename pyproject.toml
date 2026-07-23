@@ -1,0 +1,89 @@
+[project]
+name = "forex-intelligence-platform"
+version = "0.1.0"
+description = "Local-first IC Markets EUR/USD discovery and validated event pipeline"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "fastapi==0.116.1",
+  "prometheus-client==0.22.1",
+  "psutil==7.0.0",
+  "psycopg[binary,pool]==3.2.9",
+  "pydantic==2.11.7",
+  "pydantic-settings==2.10.1",
+  "redis==6.2.0",
+  "structlog==25.4.0",
+  "typer==0.16.0",
+  "uvicorn==0.35.0",
+  "websockets==15.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx==0.28.1",
+  "pyright==1.1.403",
+  "pytest==8.4.1",
+  "pytest-asyncio==1.1.0",
+  "ruff==0.12.7",
+]
+
+[project.scripts]
+forex-collector = "forex_collector.main:cli"
+forex-health = "health_api.main:run"
+forex-replay = "forex_collector.replay:app"
+forex-load-test = "forex_collector.load_test:app"
+
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = [
+  "apps/collector/src/forex_collector",
+  "apps/health_api/src/health_api",
+  "packages/contracts/src/forex_contracts",
+  "packages/adapter_sdk/src/adapter_sdk",
+  "packages/event_bus/src/event_bus",
+  "packages/storage/src/storage",
+  "packages/observability/src/observability",
+  "adapters/ic_markets/src/ic_markets_adapter",
+]
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "apps/collector/src",
+  "apps/health_api/src",
+  "packages/contracts/src",
+  "packages/adapter_sdk/src",
+  "packages/event_bus/src",
+  "packages/storage/src",
+  "packages/observability/src",
+  "adapters/ic_markets/src",
+]
+testpaths = ["packages", "adapters", "tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = ["data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "S"]
+ignore = ["S101"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+include = ["apps", "packages", "adapters"]
+exclude = ["**/tests"]
+extraPaths = [
+  "apps/collector/src",
+  "apps/health_api/src",
+  "packages/contracts/src",
+  "packages/adapter_sdk/src",
+  "packages/event_bus/src",
+  "packages/storage/src",
+  "packages/observability/src",
+  "adapters/ic_markets/src",
+]
+reportMissingTypeStubs = false

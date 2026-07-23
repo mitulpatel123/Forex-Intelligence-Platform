@@ -1,0 +1,8 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"urn:forex-intelligence:RAW_PROVIDER_EVENT:0.1",
+  "type":"object","additionalProperties":false,
+  "required":["event_id","schema_version","event_type","provider","adapter_instance_id","connection_id","session_id","received_at","payload_content_type","payload","content_hash","channel_metadata","redaction_status","redactions","trace_id"],
+  "properties":{"schema_version":{"const":"0.1"},"event_type":{"const":"RAW_PROVIDER_EVENT"},"provider":{"const":"IC_MARKETS"},"event_id":{"type":"string"},"adapter_instance_id":{"type":"string"},"connection_id":{"type":"string"},"session_id":{"type":"string"},"instrument":{"type":["string","null"]},"provider_event_time":{"type":["string","null"],"format":"date-time"},"received_at":{"type":"string","format":"date-time"},"payload_content_type":{"type":"string"},"payload":{},"content_hash":{"type":"string","pattern":"^sha256:"},"channel_metadata":{"type":"object"},"redaction_status":{"enum":["SANITIZED","NOT_REQUIRED"]},"redactions":{"type":"array","items":{"type":"string"}},"trace_id":{"type":"string"}}
+}
+
