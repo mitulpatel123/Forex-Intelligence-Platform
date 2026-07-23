@@ -5,7 +5,23 @@ quality events, and adapter heartbeats. `002_display_quote_provenance.sql` adds
 durable source qualification. Additive migration
 `003_price_tick_v02_currencies.sql` adds nullable `base_currency` and
 `quote_currency` plus an instrument/normalized-time index. Historical v0.1 rows
-are not rewritten by Milestone 2.
+are not reclassified by Milestone 2. `004_local_pipeline_timestamps.sql` adds
+browser observation, collector receipt, database creation, document session,
+observation sequence, and local delay columns.
+
+For visible display observations:
+
+```text
+provider_event_time = null
+received_time = browser_observed_at        # compatibility meaning
+collector_received_at = collector server clock at endpoint entry
+normalized_time = validator clock after validation
+database_created_at = database clock during INSERT
+```
+
+Strict local ordering is queried by
+`document_session_id, instrument, observation_sequence`. Browser time is not
+provider time and is not the ordering authority within a document session.
 
 New v0.2 rows carry the registry-derived base/quote currency and pair pip size.
 The four current Redis keys are:

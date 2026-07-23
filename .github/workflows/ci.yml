@@ -86,6 +86,12 @@ jobs:
           uv run python scripts/migrate.py
           uv run pytest -q tests/integration
 
+      - name: End-to-end smoke test
+        run: make smoke
+
+      - name: Bounded four-pair load test
+        run: make load-test
+
       - name: Secret scan
         run: |
           curl -fsSL \

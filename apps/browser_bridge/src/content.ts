@@ -7,6 +7,7 @@ import {
 import { SUPPORTED_INSTRUMENTS } from "./instruments.generated";
 
 const documentSessionId = crypto.randomUUID();
+const observationSequences = new Map<string, number>();
 let observerReady = false;
 let pairStatuses: PairStatusFrame["pairs"] = Object.fromEntries(
   SUPPORTED_INSTRUMENTS.map((instrument) => [
@@ -34,10 +35,28 @@ window.addEventListener("message", (event: MessageEvent<unknown>) => {
   }
   if (!isCapturedFrame(event.data, event.origin)) return;
   if (event.data.frameType === "dom-visible-quote") observerReady = true;
+  let observationSequence: number | null = null;
+  if (event.data.frameType === "dom-visible-quote") {
+    try {
+      const parsed = JSON.parse(event.data.payload) as { instrument?: unknown };
+      if (
+        typeof parsed.instrument === "string" &&
+        SUPPORTED_INSTRUMENTS.includes(
+          parsed.instrument as (typeof SUPPORTED_INSTRUMENTS)[number],
+        )
+      ) {
+        observationSequence = (observationSequences.get(parsed.instrument) ?? 0) + 1;
+        observationSequences.set(parsed.instrument, observationSequence);
+      }
+    } catch {
+      observationSequence = null;
+    }
+  }
   void chrome.runtime.sendMessage({
     type: "CAPTURED_FRAME",
     frame: event.data,
     documentSessionId,
+    observationSequence,
   });
 });
 

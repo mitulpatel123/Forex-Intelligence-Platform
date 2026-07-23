@@ -42,6 +42,16 @@ class Metrics:
         "Browser observations rejected",
         ["instrument"],
     )
+    multiple_browser_sources = Gauge(
+        "multiple_browser_sources",
+        "More than one eligible browser document can observe the pair",
+        ["instrument"],
+    )
+    standby_source_observations_total = Counter(
+        "standby_source_observations_total",
+        "Standby browser observations acknowledged and suppressed",
+        ["instrument"],
+    )
     adapter_reconnect_total = Counter("adapter_reconnect_total", "Adapter reconnects")
     provider_messages_total = Counter("provider_messages_total", "Provider messages")
     provider_message_bytes_total = Counter("provider_message_bytes_total", "Provider message bytes")
@@ -65,6 +75,26 @@ class Metrics:
         "latest_display_spread_pips", "Latest displayed spread in pips", ["instrument"]
     )
     ingest_latency_seconds = Histogram("ingest_latency_seconds", "Provider to receive latency")
+    browser_to_collector_delay_milliseconds = Histogram(
+        "browser_to_collector_delay_milliseconds",
+        "Browser observation to server collector receipt delay",
+        ["instrument"],
+        buckets=(-5000, -1000, -100, 0, 10, 25, 50, 100, 250, 500, 1000, 5000, 30000, 120000),
+    )
+    collector_processing_delay_milliseconds = Histogram(
+        "collector_processing_delay_milliseconds",
+        "Collector receipt to normalization delay",
+        ["instrument"],
+    )
+    total_local_pipeline_delay_milliseconds = Histogram(
+        "total_local_pipeline_delay_milliseconds",
+        "Browser observation to normalization delay",
+        ["instrument"],
+    )
+    adapter_dedup_cache_size = Gauge(
+        "adapter_dedup_cache_size",
+        "Current bounded adapter deduplication cache entries",
+    )
     normalization_latency_seconds = Histogram(
         "normalization_latency_seconds", "Normalization latency", ["instrument"]
     )

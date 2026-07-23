@@ -64,6 +64,7 @@ export function providerRequest(
   identity: BrowserIdentity,
   frame: CapturedFrame,
   quote: VisibleQuote,
+  observationSequence: number,
 ): Record<string, unknown> {
   return {
     event_id: eventId,
@@ -74,7 +75,9 @@ export function providerRequest(
     document_session_id: identity.documentSessionId,
     connection_id: identity.connectionId,
     session_id: identity.sessionId,
+    browser_observed_at: frame.receivedAt,
     received_at: frame.receivedAt,
+    observation_sequence: observationSequence,
     semantics: "snapshot",
     payload: {
       instrument: quote.instrument,

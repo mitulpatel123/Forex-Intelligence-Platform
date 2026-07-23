@@ -10,6 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = ROOT / "packages/contracts/instrument_specs.json"
 PYTHON_OUTPUT = ROOT / "packages/contracts/src/forex_contracts/instruments_generated.py"
 TYPESCRIPT_OUTPUT = ROOT / "apps/browser_bridge/src/instruments.generated.ts"
+PRICE_TICK_SCHEMA_OUTPUT = ROOT / "docs/contracts/PRICE_TICK_v0.2.schema.json"
+RAW_EVENT_SCHEMA_OUTPUT = ROOT / "docs/contracts/RAW_PROVIDER_EVENT_v0.1.schema.json"
 
 
 def render_python(specs: dict[str, dict[str, object]]) -> str:
@@ -73,9 +75,17 @@ def main() -> int:
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     specs = json.loads(REGISTRY.read_text())
+    from forex_contracts import PriceTickV02, RawProviderEvent
+
     outputs = {
         PYTHON_OUTPUT: render_python(specs),
         TYPESCRIPT_OUTPUT: render_typescript(specs),
+        PRICE_TICK_SCHEMA_OUTPUT: (
+            json.dumps(PriceTickV02.model_json_schema(), indent=2, sort_keys=True) + "\n"
+        ),
+        RAW_EVENT_SCHEMA_OUTPUT: (
+            json.dumps(RawProviderEvent.model_json_schema(), indent=2, sort_keys=True) + "\n"
+        ),
     }
     stale = [
         path

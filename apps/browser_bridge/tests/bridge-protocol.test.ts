@@ -47,6 +47,7 @@ describe("browser bridge protocol", () => {
       },
       frame,
       quote!,
+      1,
     );
     expect(request).toMatchObject({
       event_id: "event-id",
@@ -55,6 +56,9 @@ describe("browser bridge protocol", () => {
       tab_id: 1,
       frame_id: 0,
       document_session_id: "document",
+      browser_observed_at: frame.receivedAt,
+      received_at: frame.receivedAt,
+      observation_sequence: 1,
       payload: {
         observation_source: "visible_dom",
         observation_level: "DISPLAY_QUOTE",

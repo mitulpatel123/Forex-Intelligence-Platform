@@ -17,6 +17,9 @@ Python tests cover the canonical registry, deterministic generation, v0.1
 compatibility, v0.2 serialization, all pair currencies and Decimal math, the
 USDJPY `0.01` pip invariant, pair warnings, independent state/dedup, session
 invalidation, fair scheduling, per-pair capacity, and graceful drain.
+Timestamp coverage includes normal/equal time, negative skew, delayed outbox,
+collector restart ordering, page-session reset, independent four-pair sequences,
+malicious provider/collector claims, and local wall-clock adjustment.
 
 Extension tests cover four-row discovery, reordered rows/columns, exact headers,
 extra numeric columns, hidden and responsive duplicates, identical/conflicting
@@ -24,6 +27,9 @@ duplicates, missing/malformed isolation, USDJPY precision, row/table replacement
 symbol remove/re-add, unchanged suppression, bounded discovery, persistent retry,
 restart recovery, round-robin/FIFO behavior, reserved capacity, rejection, and
 duplicate drain calls.
+DOM coverage includes same-price row reacquisition. Integration coverage also
+proves one active tab per pair, standby suppression, deterministic failover, and
+safe behavior when the old active tab returns.
 
 Real Redis/TimescaleDB integration sends every pair, resends stable event IDs,
 proves one durable row per unique observation, checks four latest keys and global

@@ -28,8 +28,13 @@ class Pipeline:
         METRICS.provider_messages_total.inc()
         METRICS.provider_message_bytes_total.inc(len(str(envelope.payload).encode()))
         output = self.adapter.process(envelope)
+        METRICS.adapter_dedup_cache_size.set(self.adapter.dedup_cache_size)
         instrument = output.raw_event.instrument
         metric_instrument = instrument if is_supported_instrument(instrument) else None
+        if metric_instrument and output.raw_event.browser_to_collector_delay_ms is not None:
+            METRICS.browser_to_collector_delay_milliseconds.labels(metric_instrument).observe(
+                output.raw_event.browser_to_collector_delay_ms
+            )
 
         if self.storage:
             storage_started = perf_counter()
@@ -80,6 +85,14 @@ class Pipeline:
                 float(output.tick.spread_pips)
             )
             METRICS.events_by_quality_total.labels(output.tick.quality_status).inc()
+            if output.tick.collector_processing_delay_ms is not None:
+                METRICS.collector_processing_delay_milliseconds.labels(
+                    output.tick.instrument
+                ).observe(output.tick.collector_processing_delay_ms)
+            if output.tick.total_local_pipeline_delay_ms is not None:
+                METRICS.total_local_pipeline_delay_milliseconds.labels(
+                    output.tick.instrument
+                ).observe(output.tick.total_local_pipeline_delay_ms)
             if output.tick.provider_event_time:
                 latency = (
                     output.tick.received_at.astimezone(UTC)

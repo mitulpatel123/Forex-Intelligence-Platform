@@ -199,6 +199,24 @@ describe("four-pair targeted market-watch observer", () => {
     observer.stop();
   });
 
+  it("emits the first reacquired snapshot when the displayed price is unchanged", async () => {
+    document.body.innerHTML = table(FOUR_ROWS);
+    const quotes: VisibleQuote[] = [];
+    const observer = new MultiQuoteObserver((quote) => quotes.push(quote));
+    observer.start();
+    const before = quotes.filter((quote) => quote.instrument === "EURUSD").length;
+
+    const original = document.querySelector("[data-symbol='EURUSD']");
+    original?.replaceWith(original.cloneNode(true));
+    await reacquire();
+
+    expect(quotes.filter((quote) => quote.instrument === "EURUSD")).toHaveLength(
+      before + 1,
+    );
+    expect(observer.snapshot().EURUSD.status).toBe("READY");
+    observer.stop();
+  });
+
   it("reacquires a row when initially empty prices hydrate as text", async () => {
     document.body.innerHTML = table([
       ["EURUSD", "loading", "loading"],

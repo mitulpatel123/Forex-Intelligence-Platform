@@ -221,6 +221,11 @@ export class MultiQuoteObserver {
       if (!target) continue;
       const quote = readQuote(target);
       if (!quote) {
+        this.lastQuotes.delete(instrument);
+        this.states[instrument] = {
+          status: "MISSING",
+          lastObservationAt: this.states[instrument].lastObservationAt,
+        };
         reacquire = true;
         continue;
       }
@@ -261,17 +266,31 @@ export class MultiQuoteObserver {
   }
 
   private acquire(): void {
+    const previousTargets = new Map(this.targets);
+    const previousStates = structuredClone(this.states);
     const results = findQuoteTargets(this.root);
     this.targets.clear();
     for (const instrument of SUPPORTED_INSTRUMENTS) {
       const result = results[instrument];
       if (result.target) {
+        const previousTarget = previousTargets.get(instrument);
+        if (
+          !previousTarget ||
+          previousTarget.table !== result.target.table ||
+          previousTarget.row !== result.target.row ||
+          previousTarget.bidCell !== result.target.bidCell ||
+          previousTarget.askCell !== result.target.askCell ||
+          ["MISSING", "AMBIGUOUS"].includes(previousStates[instrument].status)
+        ) {
+          this.lastQuotes.delete(instrument);
+        }
         this.targets.set(instrument, result.target);
         this.states[instrument] = {
           status: "FOUND",
           lastObservationAt: this.states[instrument].lastObservationAt,
         };
       } else {
+        this.lastQuotes.delete(instrument);
         this.states[instrument] = {
           status: result.status,
           lastObservationAt: this.states[instrument].lastObservationAt,

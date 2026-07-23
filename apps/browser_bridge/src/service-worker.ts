@@ -136,6 +136,10 @@ async function sendHeartbeat(
     const response = await authenticatedFetch(
       HEARTBEAT_URL,
       {
+        browser_run_id: identity.browserRunId,
+        tab_id: identity.tabId,
+        frame_id: identity.frameId,
+        document_session_id: identity.documentSessionId,
         connection_id: identity.connectionId,
         session_id: identity.sessionId,
         observer_ready: observerReady,
@@ -187,12 +191,24 @@ async function queueCapturedFrame(
   const quote = parseVisibleQuote(frame);
   let event: OutboxEvent;
   if (quote) {
+    if (
+      !Number.isSafeInteger(candidate.observationSequence) ||
+      (candidate.observationSequence as number) < 1
+    ) {
+      return { accepted: false, reason: "invalid observation sequence" };
+    }
     event = {
       eventId,
       kind: "visible_quote",
       instrument: quote.instrument,
       url: PROVIDER_INGEST_URL,
-      body: providerRequest(eventId, identity, frame, quote),
+      body: providerRequest(
+        eventId,
+        identity,
+        frame,
+        quote,
+        candidate.observationSequence as number,
+      ),
       attempts: 0,
       nextAttemptAt: Date.now(),
     };

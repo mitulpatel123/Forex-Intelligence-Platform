@@ -72,6 +72,18 @@ async def replay_file(path: Path, speed: str, publish: bool, reset: bool) -> dic
             event_id=record.get("event_id"),
             connection_id=record["connection_id"],
             session_id=record["session_id"],
+            document_session_id=record.get("document_session_id"),
+            observation_sequence=record.get("observation_sequence"),
+            browser_observed_at=(
+                datetime.fromisoformat(record["browser_observed_at"].replace("Z", "+00:00"))
+                if record.get("browser_observed_at")
+                else None
+            ),
+            collector_received_at=(
+                datetime.fromisoformat(record["collector_received_at"].replace("Z", "+00:00"))
+                if record.get("collector_received_at")
+                else None
+            ),
             received_at=received,
             payload=record["payload"],
             semantics=record["semantics"],

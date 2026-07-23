@@ -83,7 +83,9 @@ def provider_body(instrument: str, event_id: str, observed_at: str) -> dict[str,
         "document_session_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
         "connection_id": "browser-run-tab-1-frame-0",
         "session_id": "document-session-1",
+        "browser_observed_at": observed_at,
         "received_at": observed_at,
+        "observation_sequence": 1,
         "semantics": "snapshot",
         "payload": {
             "instrument": instrument,
@@ -125,6 +127,10 @@ def test_four_pair_browser_idempotency_health_isolation_and_redaction(
             json={
                 "connection_id": "browser-run-tab-1-frame-0",
                 "session_id": "document-session-1",
+                "browser_run_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "tab_id": 1,
+                "frame_id": 0,
+                "document_session_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
                 "observer_ready": True,
                 "bridge_state": "receiving",
                 "outbox_pending": 0,
@@ -140,6 +146,16 @@ def test_four_pair_browser_idempotency_health_isolation_and_redaction(
 
         for instrument in SUPPORTED_INSTRUMENTS:
             body = provider_body(instrument, event_ids[instrument], observed_at)
+            if instrument == "EURUSD":
+                body["payload"] = {
+                    **body["payload"],  # type: ignore[dict-item]
+                    "provider_event_time": "2099-01-01T00:00:00Z",
+                    "source": "PROVIDER_WIRE",
+                    "observation_source": "provider_wire",
+                    "observation_level": "PROVIDER_TICK",
+                    "is_provider_tick": True,
+                    "sequence": 999,
+                }
             first = client.post("/ingest/provider", headers=headers, json=body)
             duplicate = client.post("/ingest/provider", headers=headers, json=body)
             assert first.status_code == 200
@@ -165,6 +181,10 @@ def test_four_pair_browser_idempotency_health_isolation_and_redaction(
             json={
                 "connection_id": "browser-run-tab-1-frame-0",
                 "session_id": "document-session-1",
+                "browser_run_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "tab_id": 1,
+                "frame_id": 0,
+                "document_session_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
                 "observer_ready": True,
                 "bridge_state": "receiving",
                 "outbox_pending": 0,
@@ -256,3 +276,145 @@ def test_four_pair_browser_idempotency_health_isolation_and_redaction(
         ("USDJPY", "USD", "JPY"),
         ("AUDUSD", "AUD", "USD"),
     }
+
+    async def timestamp_evidence() -> list[tuple[object, ...]]:
+        storage = PostgresStorage(settings.database_url)
+        await storage.open()
+        try:
+            async with storage.pool.connection() as connection:
+                return list(
+                    await (
+                        await connection.execute(
+                            """
+                            SELECT provider_event_time, received_time,
+                                   browser_observed_at, collector_received_at,
+                                   database_created_at, sequence,
+                                   observation_sequence,
+                                   browser_to_collector_delay_ms,
+                                   collector_processing_delay_ms,
+                                   total_local_pipeline_delay_ms
+                            FROM price_ticks
+                            ORDER BY instrument
+                            """
+                        )
+                    ).fetchall()
+                )
+        finally:
+            await storage.close()
+
+    timestamps = asyncio.run(timestamp_evidence())
+    assert len(timestamps) == 4
+    assert all(row[0] is None for row in timestamps)
+    assert all(row[1] == row[2] for row in timestamps)
+    assert all(row[3] is not None and row[4] is not None for row in timestamps)
+    assert all(row[5] is None and row[6] == 1 for row in timestamps)
+    assert all(all(value is not None for value in row[7:]) for row in timestamps)
+
+
+def test_active_source_lease_failover_and_untrusted_collector_time(
+    tmp_path: Path,
+) -> None:
+    token = "u" * 48
+    token_path = tmp_path / "bridge-token"
+    token_path.write_text(token)
+    settings = Settings(bridge_token_file=str(token_path))
+    asyncio.run(reset_storage(settings))
+    headers = {"X-Bridge-Token": token}
+    observed_at = datetime.now(UTC).isoformat()
+
+    def heartbeat(
+        *,
+        connection: str,
+        session: str,
+        run: str,
+        tab: int,
+        document: str,
+        ready: bool,
+    ) -> dict[str, object]:
+        return {
+            "connection_id": connection,
+            "session_id": session,
+            "browser_run_id": run,
+            "tab_id": tab,
+            "frame_id": 0,
+            "document_session_id": document,
+            "observer_ready": ready,
+            "bridge_state": "receiving" if ready else "disconnected",
+            "outbox_pending": 0,
+            "outbox_produced": 0,
+            "outbox_acknowledged": 0,
+            "outbox_retries": 0,
+            "outbox_dropped": 0,
+            "outbox_rejected": 0,
+            "pairs": heartbeat_pairs(observed_at),
+        }
+
+    with TestClient(create_app(settings)) as client:
+        first_heartbeat = heartbeat(
+            connection="browser-run-tab-1-frame-0",
+            session="document-session-1",
+            run="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            tab=1,
+            document="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            ready=True,
+        )
+        second_heartbeat = heartbeat(
+            connection="browser-run-tab-2-frame-0",
+            session="document-session-2",
+            run="cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            tab=2,
+            document="dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            ready=True,
+        )
+        assert (
+            client.post(
+                "/ingest/bridge-heartbeat", headers=headers, json=first_heartbeat
+            ).status_code
+            == 200
+        )
+        assert (
+            client.post(
+                "/ingest/bridge-heartbeat", headers=headers, json=second_heartbeat
+            ).status_code
+            == 200
+        )
+        health = client.get("/health/components").json()
+        assert health["pairs"]["EURUSD"]["source_status"] == "MULTIPLE_SOURCES"
+        assert health["pairs"]["EURUSD"]["active_source"]["tab_id"] == 1
+
+        standby = provider_body("EURUSD", "standby-event-0001", observed_at)
+        standby.update(
+            {
+                "browser_run_id": second_heartbeat["browser_run_id"],
+                "tab_id": 2,
+                "document_session_id": second_heartbeat["document_session_id"],
+                "connection_id": second_heartbeat["connection_id"],
+                "session_id": second_heartbeat["session_id"],
+            }
+        )
+        suppressed = client.post("/ingest/provider", headers=headers, json=standby)
+        assert suppressed.status_code == 200
+        assert suppressed.json()["reason"] == "STANDBY_SOURCE"
+
+        malicious = provider_body("EURUSD", "malicious-time-0001", observed_at)
+        malicious["collector_received_at"] = "2099-01-01T00:00:00Z"
+        assert client.post("/ingest/provider", headers=headers, json=malicious).status_code == 422
+
+        first_heartbeat["observer_ready"] = False
+        assert (
+            client.post(
+                "/ingest/bridge-heartbeat", headers=headers, json=first_heartbeat
+            ).status_code
+            == 200
+        )
+        standby["event_id"] = "failover-event-0002"
+        standby["observation_sequence"] = 2
+        failover = client.post("/ingest/provider", headers=headers, json=standby)
+        assert failover.status_code == 200
+        assert failover.json()["valid_ticks"] == 1
+
+        old_active = provider_body("EURUSD", "old-active-event-0002", observed_at)
+        old_active["observation_sequence"] = 2
+        old_return = client.post("/ingest/provider", headers=headers, json=old_active)
+        assert old_return.status_code == 200
+        assert old_return.json()["reason"] == "STANDBY_SOURCE"

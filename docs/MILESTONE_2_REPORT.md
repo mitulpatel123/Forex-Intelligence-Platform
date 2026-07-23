@@ -14,12 +14,21 @@ generic four-pair adapter and DOM capture, fair persistent browser delivery, fai
 collector queues, additive storage migration, four current/health Redis keys,
 per-pair health/metrics/UI, replay/load/smoke coverage, and documentation.
 
+The review baseline `c5c9c5854f8fbdd35dda8e64f1ca79512e93291c` predates the
+timestamp/provenance hardening documented below.
+
 ## Contract, registry, and migration
 
 `PRICE_TICK` v0.1 was not redefined. New observations use v0.2 with registry-derived
 base/quote currencies and pip sizes. A discriminated union reads both versions.
 Migration `003_price_tick_v02_currencies.sql` adds nullable currency columns and one
 justified query index. It does not rewrite history.
+
+Migration `004_local_pipeline_timestamps.sql` stores browser observation,
+server-generated collector receipt, post-validation normalization, and
+database-generated creation timestamps separately. It also stores strict
+per-document/per-pair observation sequence and three local delay measurements.
+Visible observations always retain null provider time/provider sequence.
 
 ## DOM and fairness design
 
@@ -52,12 +61,13 @@ make secret-scan
 
 Current local results:
 
-- Python unit/contract/adapter/queue: 51 passed
-- Extension/manifest/DOM/outbox: 41 passed
-- Real Redis/TimescaleDB integration/replay: 3 passed
+- Python unit/contract/adapter/queue: 59 passed
+- Extension/manifest/DOM/outbox: 42 passed
+- Real Redis/TimescaleDB integration/replay: 4 passed
 - Smoke: passed
 - Mixed load: 5,000 processed, 0 dropped, all four pairs processed, no starvation
-- GitHub Actions quality job: passed on `b1f5159601d1fbe1bd8e0209c1a5cc1bd0380594`
+- Secret scan: passed locally
+- GitHub Actions hardening result: pending on the new draft-PR head
 
 Mixed-load distribution was EURUSD 40%, GBPUSD 25%, USDJPY 20%, AUDUSD 15%.
 It is a deterministic local display-quote pipeline workload, not provider-native
@@ -69,6 +79,12 @@ warnings. The legacy four-record v0.1-era fixture remains replayable (three vali
 one intentionally invalid).
 
 ## Live validation
+
+The following soak is historical evidence from the pre-hardening PR head. It is
+not claimed as final validation of the timestamp/lease changes. A new live Chrome
+soak remains pending because the browser-control connection could not be
+established during this implementation run; all automated and integration gates
+above used the hardened code.
 
 The definitive final-build soak ran for 30 minutes 10 seconds, from
 `2026-07-23T20:36:50Z` through `2026-07-23T21:07:00Z`. All values below are deltas
@@ -116,9 +132,22 @@ double-redacted, and OFF by default.
 No trading or account controls were accessed during implementation or automated
 or live validation.
 
+## Timestamp and multi-source hardening
+
+The collector allowlists quote values and overwrites all provenance qualifiers, so
+client claims cannot turn a visible DOM row into a provider tick or supply provider
+or collector timestamps. `received_at` remains a compatibility alias for
+`browser_observed_at` only. Configurable quality rules flag negative/excessive
+delivery delay, browser wall-clock adjustment, and missing/non-increasing sequence.
+
+Deduplication is a bounded TTL/LRU cache and is cleared with expired document
+sessions. A per-pair active-source lease prevents two open terminal tabs from
+double-normalizing quotes; standby messages are deterministically acknowledged and
+suppressed, with identity-safe health and failover visibility.
+
 ## Limitations and recommended Milestone 3
 
-The visible rows expose no provider timestamp, sequence, or provider-native event
+The visible rows expose no provider timestamp, provider sequence, or provider-native event
 completeness. A browser DOM change may require observer maintenance. Milestone 3
 should add downstream analytics only after preserving v0.2 compatibility,
 per-pair fairness, reconciliation, and display-quote qualification.

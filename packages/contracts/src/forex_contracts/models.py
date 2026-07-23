@@ -86,7 +86,7 @@ class EventBase(BaseModel):
     def timestamps_are_utc(cls, value: datetime | None) -> datetime | None:
         if value is not None and (value.tzinfo is None or value.utcoffset() is None):
             raise ValueError("timestamps must be timezone-aware UTC")
-        return value
+        return value.astimezone(UTC) if value is not None else None
 
 
 class PriceTickV01(EventBase):
@@ -156,6 +156,20 @@ class PriceTickV02(EventBase):
     pip_size: Decimal
     is_snapshot: bool
     changed_fields: list[Literal["bid", "ask"]]
+    browser_observed_at: datetime | None = None
+    collector_received_at: datetime | None = None
+    document_session_id: str | None = None
+    observation_sequence: int | None = Field(default=None, ge=1)
+    browser_to_collector_delay_ms: float | None = None
+    collector_processing_delay_ms: float | None = None
+    total_local_pipeline_delay_ms: float | None = None
+
+    @field_validator("browser_observed_at", "collector_received_at")
+    @classmethod
+    def local_timestamps_are_utc(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("timestamps must be timezone-aware UTC")
+        return value.astimezone(UTC) if value is not None else None
 
     @model_validator(mode="after")
     def validate_quote_math(self) -> PriceTickV02:
@@ -237,6 +251,11 @@ class RawProviderEvent(BaseModel):
     instrument: str | None = None
     provider_event_time: datetime | None = None
     received_at: datetime
+    browser_observed_at: datetime | None = None
+    collector_received_at: datetime | None = None
+    document_session_id: str | None = None
+    observation_sequence: int | None = Field(default=None, ge=1)
+    browser_to_collector_delay_ms: float | None = None
     payload_content_type: str
     payload: str | dict[str, Any]
     content_hash: str
@@ -244,6 +263,18 @@ class RawProviderEvent(BaseModel):
     redaction_status: Literal["SANITIZED", "NOT_REQUIRED"]
     redactions: list[str] = Field(default_factory=list)
     trace_id: str = Field(default_factory=new_event_id)
+
+    @field_validator(
+        "provider_event_time",
+        "received_at",
+        "browser_observed_at",
+        "collector_received_at",
+    )
+    @classmethod
+    def raw_timestamps_are_utc(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("timestamps must be timezone-aware UTC")
+        return value.astimezone(UTC) if value is not None else None
 
 
 class DataQualityEvent(BaseModel):
