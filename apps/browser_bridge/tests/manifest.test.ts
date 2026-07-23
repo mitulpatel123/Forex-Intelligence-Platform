@@ -7,7 +7,12 @@ const manifest = JSON.parse(
   manifest_version: number;
   permissions: string[];
   host_permissions: string[];
-  content_scripts: Array<{ matches: string[]; run_at: string; world?: string }>;
+  content_scripts: Array<{
+    matches: string[];
+    run_at: string;
+    all_frames?: boolean;
+    world?: string;
+  }>;
 };
 
 describe("manifest safety", () => {
@@ -20,8 +25,14 @@ describe("manifest safety", () => {
   it("injects the observer in MAIN at document_start", () => {
     expect(manifest.content_scripts[0]).toMatchObject({
       run_at: "document_start",
+      all_frames: true,
       world: "MAIN",
     });
+  });
+
+  it("injects both bridge scripts into the embedded trading terminal", () => {
+    expect(manifest.content_scripts).toHaveLength(2);
+    expect(manifest.content_scripts.every((script) => script.all_frames === true)).toBe(true);
   });
 
   it("requests only extension-local storage", () => {

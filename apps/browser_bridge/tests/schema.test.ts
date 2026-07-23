@@ -20,6 +20,28 @@ describe("bridge validation", () => {
     expect(isCapturedFrame(frame, allowedOrigin)).toBe(true);
   });
 
+  it("accepts a bounded UTF-8 decoded binary frame", () => {
+    expect(
+      isCapturedFrame(
+        { ...frame, frameType: "websocket-binary-utf8" },
+        allowedOrigin,
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts a visible EUR/USD quote frame", () => {
+    expect(
+      isCapturedFrame(
+        {
+          ...frame,
+          frameType: "dom-visible-quote",
+          payload: '{"instrument":"EURUSD","bid":"1.08542","ask":"1.08544"}',
+        },
+        allowedOrigin,
+      ),
+    ).toBe(true);
+  });
+
   it("rejects the wrong origin", () => {
     expect(isCapturedFrame(frame, "https://evil.example")).toBe(false);
   });

@@ -145,8 +145,9 @@ class IcMarketsAdapter(Adapter):
                 ],
             )
 
-        provider_time = self._parse_time(sanitized.get("provider_event_time"))
-        if provider_time is None:
+        provider_time_value = sanitized.get("provider_event_time")
+        provider_time = self._parse_time(provider_time_value)
+        if provider_time_value is not None and provider_time is None:
             return AdapterOutput(
                 raw_event=raw,
                 quality_events=[
@@ -155,12 +156,15 @@ class IcMarketsAdapter(Adapter):
                         "TIME_PARSE_UTC",
                         QualityStatus.UNPARSEABLE,
                         "timezone-aware provider_event_time",
-                        observed=str(sanitized.get("provider_event_time")),
+                        observed=str(provider_time_value),
                     )
                 ],
             )
         raw.provider_event_time = provider_time
-        if provider_time > envelope.received_at + self.max_future_skew:
+        if (
+            provider_time is not None
+            and provider_time > envelope.received_at + self.max_future_skew
+        ):
             return AdapterOutput(
                 raw_event=raw,
                 quality_events=[
@@ -272,13 +276,17 @@ class IcMarketsAdapter(Adapter):
                 ],
             )
 
+        event_order_time = provider_time or envelope.received_at
         dedup = canonical_hash(
             {
                 "provider": "IC_MARKETS",
                 "connection_id": envelope.connection_id,
                 "session_id": envelope.session_id,
                 "instrument": "EURUSD",
-                "provider_event_time": provider_time.isoformat(),
+                "event_order_time": event_order_time.isoformat(),
+                "timestamp_basis": "provider"
+                if provider_time is not None
+                else "browser_observation",
                 "bid": str(bid),
                 "ask": str(ask),
                 "sequence": sequence,
@@ -302,6 +310,19 @@ class IcMarketsAdapter(Adapter):
         flags: list[str] = []
         status = QualityStatus.GOOD
         qualities: list[DataQualityEvent] = []
+        if provider_time is None:
+            flags.append("PROVIDER_TIMESTAMP_UNAVAILABLE")
+            status = QualityStatus.WARNING
+            qualities.append(
+                self._quality(
+                    raw,
+                    "TIME_PROVIDER_UNAVAILABLE",
+                    QualityStatus.WARNING,
+                    "provider timestamp present; browser observation time used for ordering",
+                    action="tick_published_with_warning",
+                    severity="WARNING",
+                )
+            )
         if previous is not None:
             if (
                 sequence is not None
@@ -326,7 +347,7 @@ class IcMarketsAdapter(Adapter):
                         )
                     ],
                 )
-            if provider_time < previous.provider_event_time:
+            if event_order_time < previous.provider_event_time:
                 return AdapterOutput(
                     raw_event=raw,
                     quality_events=[
@@ -390,5 +411,11 @@ class IcMarketsAdapter(Adapter):
             trace_id=raw.trace_id,
         )
         self._seen.add(dedup)
-        self._state[key] = QuoteState(bid, ask, envelope.received_at, provider_time, sequence)
+        self._state[key] = QuoteState(
+            bid,
+            ask,
+            envelope.received_at,
+            event_order_time,
+            sequence,
+        )
         return AdapterOutput(raw_event=raw, tick=tick, quality_events=qualities)

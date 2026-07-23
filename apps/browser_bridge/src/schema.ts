@@ -12,7 +12,7 @@ export const ALLOWED_ORIGINS = new Set([
 
 export type CapturedFrame = {
   channel: typeof CHANNEL;
-  frameType: "websocket-text";
+  frameType: "websocket-text" | "websocket-binary-utf8" | "dom-visible-quote";
   receivedAt: string;
   payload: string;
 };
@@ -22,7 +22,9 @@ export function isCapturedFrame(value: unknown, origin: string): value is Captur
   const frame = value as Record<string, unknown>;
   return (
     frame.channel === CHANNEL &&
-    frame.frameType === "websocket-text" &&
+    (frame.frameType === "websocket-text" ||
+      frame.frameType === "websocket-binary-utf8" ||
+      frame.frameType === "dom-visible-quote") &&
     typeof frame.receivedAt === "string" &&
     !Number.isNaN(Date.parse(frame.receivedAt)) &&
     typeof frame.payload === "string" &&

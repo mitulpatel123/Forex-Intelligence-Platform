@@ -5,7 +5,7 @@ import json
 import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -107,16 +107,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             async def heartbeat_worker() -> None:
                 process = psutil.Process()
                 while True:
+                    last_tick = state["last_tick"]
+                    tick_age = datetime.now(UTC) - last_tick if last_tick is not None else None
+                    if last_tick is None:
+                        adapter_state = AdapterState.BLOCKED_BY_PROVIDER_DISCOVERY
+                        summary = "Waiting for the first validated live EUR/USD quote"
+                        connected = 0
+                    elif tick_age is not None and tick_age > timedelta(
+                        seconds=config.stale_after_seconds
+                    ):
+                        adapter_state = AdapterState.DEGRADED
+                        summary = "Live EUR/USD bridge connected but the latest tick is stale"
+                        connected = 1
+                    else:
+                        adapter_state = AdapterState.CONNECTED
+                        summary = "Validated live EUR/USD quotes are flowing"
+                        connected = 1
+                    state["components"]["adapter"] = adapter_state.value
                     heartbeat = AdapterStatus(
                         instance_id="icm-local-01",
-                        state=AdapterState.BLOCKED_BY_PROVIDER_DISCOVERY,
+                        state=adapter_state,
                         last_message_time=state["last_event"],
-                        last_valid_tick_time=state["last_tick"],
-                        summary="Capture instrumentation ready; live schema discovery blocked",
+                        last_valid_tick_time=last_tick,
+                        summary=summary,
                     )
                     await storage.store_heartbeat(heartbeat)
                     await bus.publish("adapter.status", heartbeat)
-                    METRICS.adapter_connected.set(0)
+                    METRICS.adapter_connected.set(connected)
                     METRICS.collector_process_cpu_percent.set(process.cpu_percent())
                     METRICS.collector_process_memory_bytes.set(process.memory_info().rss)
                     await asyncio.sleep(5)
@@ -169,6 +186,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def components() -> dict[str, Any]:
         last_tick = state["last_tick"]
         age = (datetime.now(UTC) - last_tick).total_seconds() if last_tick is not None else None
+        if age is None:
+            state["components"]["adapter"] = AdapterState.BLOCKED_BY_PROVIDER_DISCOVERY.value
+        elif age > config.stale_after_seconds:
+            state["components"]["adapter"] = AdapterState.DEGRADED.value
+        else:
+            state["components"]["adapter"] = AdapterState.CONNECTED.value
         return {
             "components": state["components"],
             "feed": {

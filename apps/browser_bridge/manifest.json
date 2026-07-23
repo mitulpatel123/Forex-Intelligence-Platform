@@ -27,6 +27,7 @@
       ],
       "js": ["dist/page-observer.js"],
       "run_at": "document_start",
+      "all_frames": true,
       "world": "MAIN"
     },
     {
@@ -40,7 +41,8 @@
         "https://mt5demo.icmarkets.com/*"
       ],
       "js": ["dist/content.js"],
-      "run_at": "document_start"
+      "run_at": "document_start",
+      "all_frames": true
     }
   ],
   "background": {

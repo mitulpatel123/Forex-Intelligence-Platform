@@ -5,11 +5,11 @@ infrastructure.
 
 ```text
 IC wrapper + MetaTrader iframe
-  -> MV3 discovery observer (sanitized EURUSD candidate text only)
-  -> authenticated loopback discovery endpoint
+  -> MT5 binary WebSocket transport
+  -> visible EURUSD market-watch row
+  -> MV3 narrow DOM quote observer
+  -> authenticated loopback provider endpoint
   -> immutable RAW_PROVIDER_EVENT
-
-sanitized replay fixture
   -> IC Markets adapter
   -> deterministic validation/state reconstruction
   -> PRICE_TICK + DATA_QUALITY_EVENT
@@ -23,7 +23,8 @@ connection, session, and instrument, and is invalidated on disconnect. Consumers
 use Redis consumer groups and acknowledge only after work succeeds. Durable inserts
 are idempotent through composite primary keys.
 
-The live mapping is intentionally absent until a real authenticated frame can be
-sanitized and decoded. The replay fixture describes the bridge contract, not an
-invented provider wire format.
-
+The observed MT5 transport is a binary `ArrayBuffer` WebSocket using a provider
+codec. The project does not reverse engineer or bypass that codec. The evidence-backed
+fallback observes only the browser-rendered EURUSD symbol, bid, and ask. Since that
+surface exposes no provider timestamp or sequence, normalized ticks retain a null
+provider timestamp and an explicit `PROVIDER_TIMESTAMP_UNAVAILABLE` warning.

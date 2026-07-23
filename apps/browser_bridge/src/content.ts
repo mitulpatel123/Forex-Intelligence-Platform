@@ -5,3 +5,4 @@ window.addEventListener("message", (event: MessageEvent<unknown>) => {
   void chrome.runtime.sendMessage({ type: "CAPTURED_FRAME", frame: event.data });
 });
 
+void chrome.runtime.sendMessage({ type: "OBSERVER_READY" });

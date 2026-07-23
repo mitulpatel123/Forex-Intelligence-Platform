@@ -145,6 +145,26 @@ def test_future_clock_skew() -> None:
     assert rule(output) == "TIME_FUTURE_SKEW"
 
 
+def test_visible_dom_quote_without_provider_timestamp_is_published_with_warning() -> None:
+    observed = envelope().model_copy(
+        update={
+            "payload": {
+                "instrument": "EURUSD",
+                "bid": "1.08542",
+                "ask": "1.08544",
+                "provider_event_time": None,
+                "observation_source": "visible_dom",
+            }
+        }
+    )
+    output = IcMarketsAdapter().process(observed)
+    assert output.tick is not None
+    assert output.tick.provider_event_time is None
+    assert output.tick.quality_status == QualityStatus.WARNING
+    assert "PROVIDER_TIMESTAMP_UNAVAILABLE" in output.tick.quality_flags
+    assert rule(output) == "TIME_PROVIDER_UNAVAILABLE"
+
+
 def test_duplicate_policy_and_hash_determinism() -> None:
     adapter = IcMarketsAdapter()
     adapter.process(envelope())

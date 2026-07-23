@@ -22,12 +22,24 @@ Supported speeds are `max`, `realtime`, `step`, and `xN`. Add `--reset` only wit
 Extension build/load:
 
 ```bash
-pnpm exec tsc -p apps/browser_bridge/tsconfig.json
+pnpm extension:build
 ```
 
 Open `chrome://extensions`, enable Developer mode, load
 `apps/browser_bridge` unpacked, start the collector, open extension Options, and
 copy the local token from `.local/bridge-token`. This token is only for localhost;
-never enter an IC Markets credential. Manually log in/MFA, select MT5/server and
-EUR/USD, then inspect ignored discovery records. Do not use trading controls.
+never enter an IC Markets credential. Manually log in/MFA and display EURUSD in
+Market Watch. The popup should change from `waiting for EUR/USD` to `receiving`.
+Do not use trading controls.
 
+Verify the live path:
+
+```bash
+curl -fsS http://127.0.0.1:8001/health/components
+docker compose exec -T redis redis-cli XLEN normalized.price_tick
+docker compose exec -T timescaledb psql -U forex -d forex -c \
+  "SELECT received_time,bid,ask,quality_status FROM price_ticks ORDER BY received_time DESC LIMIT 5"
+```
+
+`provider_event_time` is null and quality is `WARNING` for this collection method
+because the visible terminal row does not expose the provider timestamp or sequence.
