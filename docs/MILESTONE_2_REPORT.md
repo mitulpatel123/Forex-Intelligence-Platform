@@ -67,7 +67,8 @@ Current local results:
 - Smoke: passed
 - Mixed load: 5,000 processed, 0 dropped, all four pairs processed, no starvation
 - Secret scan: passed locally
-- GitHub Actions hardening result: pending on the new draft-PR head
+- GitHub Actions hardening result: all gates passed on
+  `014113ba607bde983cc9f74f72da969053a1cc8b`
 
 Mixed-load distribution was EURUSD 40%, GBPUSD 25%, USDJPY 20%, AUDUSD 15%.
 It is a deterministic local display-quote pipeline workload, not provider-native
